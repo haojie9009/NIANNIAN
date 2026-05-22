@@ -1,14 +1,11 @@
 # backend/services/service_manager.py
 # 统一出口 —— routers 只允许从这里 import。
-# 通过 backend/services/__init__.py 已经将项目根加入 sys.path，
-# 因此可以直接复用根目录下的 llm_client / skill_loader 等模块。
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import gate_manager, session_store  # noqa: F401  触发 backend.services.__init__ 注入 sys.path
+from . import gate_manager, session_store  # noqa: F401
 
-# ── 从项目根模块导入业务函数（共享同一份代码）─────────────────────────────
-from llm_client import (  # type: ignore
+from .llm_client import (
     PRIMARY_CLIENT,
     TEXT_MODEL,
     TEXT_FALLBACK_MODEL,
@@ -24,7 +21,8 @@ from llm_client import (  # type: ignore
     generate_video_302ai_i2v,
     generate_video_kling,
 )
-from skill_loader import load_skill  # type: ignore
+from .skill_loader import load_skill
+from logger import svc_logger
 
 ROOT_DIR    = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR  = ROOT_DIR / "skills"
@@ -32,8 +30,11 @@ ASSET_DIR   = ROOT_DIR / "asset"
 OUTPUTS_DIR = ROOT_DIR / "backend" / "outputs"
 UPLOADS_DIR = OUTPUTS_DIR / "uploads"
 FINAL_DIR   = OUTPUTS_DIR / "final_cuts"
+GENERATED_DIR = OUTPUTS_DIR / "generated"
+GEN_IMAGES_DIR = GENERATED_DIR / "images"
+GEN_VIDEOS_DIR = GENERATED_DIR / "videos"
 
-for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR):
+for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR, GENERATED_DIR, GEN_IMAGES_DIR, GEN_VIDEOS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
@@ -330,7 +331,7 @@ def parse_chat_file(file_bytes: bytes, filename: str, target: str) -> List[Dict[
     elif ext == "txt":
         text = file_bytes.decode("utf-8", errors="replace")
         pattern = _re2.compile(
-            r'(?:\[([^\]]+)\]\s+)?([^\n:：\(]+)[：:\(]\s*([^\n]+(?:\n(?!\[|\d{4})[^\n]+)*)',
+            r'(?:\[([^\]]+)\]\s+)?([^\n:：\(]+)(?:\([^)]*\))?[：:]\s*([^\n]+(?:\n(?!\[|\d{4})[^\n]+)*)',
             _re2.MULTILINE,
         )
         for m in pattern.finditer(text):
@@ -567,6 +568,39 @@ def run_pipeline_chain(sid: str) -> Dict[str, Any]:
     }
 
 
+# ── 生成资源本地持久化 ─────────────────────────────────────────────────
+def _save_generated_image(b64: str, sid: str, scene_idx: int) -> str:
+    """将 base64 图片写入磁盘，返回本地 URL。"""
+    import base64 as _b64
+    filename = f"{sid}_scene{scene_idx}.png"
+    path = GEN_IMAGES_DIR / filename
+    path.write_bytes(_b64.b64decode(b64))
+    return f"/api/outputs/generated/images/{filename}"
+
+
+def _download_generated_video(video_url: str, sid: str, scene_idx: int) -> Optional[str]:
+    """下载云端视频到本地，返回本地 URL；失败返回 None。"""
+    import requests as _requests_dl
+    ext = "mp4"
+    if "." in video_url.split("/")[-1].split("?")[0]:
+        ext = video_url.split("/")[-1].split("?")[0].rsplit(".", 1)[-1].lower()
+        if ext not in ("mp4", "mov", "webm"):
+            ext = "mp4"
+    filename = f"{sid}_scene{scene_idx}.{ext}"
+    path = GEN_VIDEOS_DIR / filename
+    try:
+        r = _requests_dl.get(video_url, timeout=120, stream=True)
+        if r.status_code == 200:
+            with open(path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return f"/api/outputs/generated/videos/{filename}"
+        svc_logger.warning("[video_download] HTTP %d for %s", r.status_code, video_url)
+    except Exception as e:
+        svc_logger.exception("[video_download] failed: %s", e)
+    return None
+
+
 # ── 分镜场景：单镜图片/视频生成 ─────────────────────────────────────────
 def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
     if not isinstance(mv04_out, dict):
@@ -630,7 +664,7 @@ def get_characters(sid: str) -> Dict[str, Any]:
 
 
 def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
-    """为单个分镜生成图片。返回 {url: data-url} 或 {error, message}"""
+    """为单个分镜生成图片。写入本地磁盘，返回可访问的 URL。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -653,15 +687,15 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
-    data_url = f"data:image/png;base64,{b64}"
-    # 缓存到 scene
-    scene["_image_data_url"] = data_url
-    scene["_image_prompt"]   = image_prompt
-    return {"url": data_url}
+    # 持久化到磁盘
+    local_url = _save_generated_image(b64, sid, scene_idx)
+    scene["_image_url"] = local_url
+    scene["_image_prompt"] = image_prompt
+    return {"url": local_url}
 
 
 def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, Any]:
-    """为单个分镜生成视频。image_url 可为 data URL 或 https URL。"""
+    """为单个分镜生成视频。下载至本地磁盘，返回可访问的 URL。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -670,7 +704,7 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
-    image_url = image_url or scene.get("_image_data_url", "")
+    image_url = image_url or scene.get("_image_url", "")
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
 
@@ -684,18 +718,73 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
-    # 调用可灵官方 API（含 302.ai 自动 fallback，与 archive/streamlit/pages/studio.py 完全一致）
+    # 异步提交（poll=False），立即返回 task_id，由前端轮询
     res = generate_video_kling(
         prompt=video_prompt,
         image_url=image_url,
         duration=5,
-        poll=True,
-        max_wait=600,
+        poll=False,
     )
     if res.get("error"):
         return {"error": True, "message": res.get("error")}
-    url = res.get("url")
-    if not url:
-        return {"error": True, "message": f"视频未返回 URL：{res}"}
-    scene["_video_url"] = url
-    return {"url": url}
+
+    task_id = res.get("task_id")
+    source  = res.get("source", "302ai")
+    if not task_id:
+        return {"error": True, "message": f"视频提交未返回 task_id：{res}"}
+
+    # 把 task_id 存入 scene，方便后续轮询时定位
+    scene["_video_task_id"]     = task_id
+    scene["_video_task_source"] = source
+    scene["_video_status"]      = "pending"
+    svc_logger.info("[video] 提交成功 task_id=%s source=%s sid=%s scene=%d", task_id, source, sid, scene_idx)
+    return {"task_id": task_id, "source": source, "status": "pending"}
+
+
+def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dict[str, Any]:
+    """轮询视频任务状态。完成后下载到本地并更新 scene。
+    返回:
+      处理中 → {"status": "processing", "task_id": ...}
+      完成   → {"status": "done", "url": "/api/outputs/..."}
+      失败   → {"status": "failed", "message": ...}
+    """
+    # 单次轮询（max_wait=0 → 只查一次状态）
+    if source == "302ai":
+        res = generate_video_302ai_i2v(
+            prompt="", image_b64_or_url="",
+            poll=True, max_wait=0, _task_id_only=task_id,
+        )
+    else:
+        res = generate_video_kling(
+            prompt="", image_url="",
+            poll=True, max_wait=0, _task_id_only=task_id,
+        )
+
+    if res.get("error"):
+        err = res["error"]
+        # 超时 = 仍在处理中，不是真正失败
+        if "超时" in str(err):
+            return {"status": "processing", "task_id": task_id, "source": source}
+        return {"status": "failed", "message": err}
+
+    cloud_url = res.get("url")
+    if not cloud_url:
+        return {"status": "processing", "task_id": task_id, "source": source}
+
+    # 下载到本地
+    local_url = _download_generated_video(cloud_url, sid, scene_idx)
+    final_url = local_url or cloud_url
+
+    # 更新 scene 缓存
+    try:
+        s = session_store.require(sid)
+        mv04 = s["mv_outputs"].get("MV04")
+        scenes = _get_scenes_from_mv04(mv04)
+        if 0 <= scene_idx < len(scenes):
+            scenes[scene_idx]["_video_url"]    = final_url
+            scenes[scene_idx]["_video_status"] = "done"
+    except Exception:
+        pass
+
+    svc_logger.info("[video] 完成 task_id=%s url=%s", task_id, final_url)
+    return {"status": "done", "url": final_url}

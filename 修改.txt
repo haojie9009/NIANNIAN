@@ -1,0 +1,109 @@
+
+1. **Pipeline 逻辑重组**：MV03/MV04 职责对调，先做分镜脚本再锁定圣经，更符合影视制作流程
+2. **闸门系统强化**：从隐式门控升级为显式 G1-G6 人工闸门，支持局部循环修改
+3. **母 Skill 引入**：MPO v5.0 规范统一调度，明确各阶段输入输出与闸门规则
+4. **采访体验升级**：三步引导式 phase 状态机，共情式对话替代冰冷表单
+5. **LLM 客户端扩展**：代码量增长 61%，新增可灵官方直连、语音转写、参考图独立函数
+6. **Mini Pipeline 移除**：不再维护独立 CLI 工具，统一为 Web 应用
+7. **依赖精简**：移除 pyproject.toml，新增 Pillow/PyJWT，提升图像处理能力
+8. **视频模型升级**：从 Kling O3 (omni3) 升级为 Kling v1.5 Pro
+
+
+-----------------------------------------------------------------------------------------
+
+为什么“填入全部测试数据（陈文斌）”调用 
+http://localhost:8000/api/intake/test-data 后，
+还需要调用  http://localhost:8000/api/intake/session/6471d4a22bb245b592a32f4ef9a3511f
+
+
+开始影像制作：
+http://localhost:8000/api/intake/session/6471d4a22bb245b592a32f4ef9a3511f
+
+下一步：
+http://localhost:8000/api/intake/submit
+开始与念念AI对话：
+http://localhost:8000/api/intake/submit
+http://localhost:8000/api/chat/message
+
+开始制作影像：
+static/pipeline.html
+
+http://localhost:8000/api/intake/session/d4b321274d704ab8813a20a3eddbed3a
+http://localhost:8000/api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3
+
+就按这个来：
+http://localhost:8000/api/pipeline/run-all/6471d4a22bb245b592a32f4ef9a3511f
+
+
+调用大模型：
+正在整理影像方案
+
+进入分镜制作台：
+http://localhost:8000/api/pipeline/characters/6471d4a22bb245b592a32f4ef9a3511f
+http://localhost:8000/api/pipeline/scenes/6471d4a22bb245b592a32f4ef9a3511f
+
+生成分镜：
+http://localhost:8000/api/pipeline/run/MV04/d4b321274d704ab8813a20a3eddbed3a
+
+生成图片：
+http://localhost:8000/api/pipeline/scene/image/6471d4a22bb245b592a32f4ef9a3511f/1
+
+生成视频：
+http://localhost:8000/api/pipeline/scene/video/6471d4a22bb245b592a32f4ef9a3511f/1
+合成最终影像：
+http://localhost:8000/api/pipeline/run/MV06/d4b321274d704ab8813a20a3eddbed3a
+开始深度探索：
+http://localhost:8000/api/intake/deep-search
+将信息填入表单：
+http://localhost:8000/api/intake/apply-fields
+http://localhost:8000/api/intake/session/d4b321274d704ab8813a20a3eddbed3a
+
+数字人对话
+开始AI风格分析
+http://localhost:8000/api/dialogue/analyze
+
+
+
+1、中间结果载入（不再调用大模型）
+2、调用大模型过程中，重新刷新页面，是否中断？
+3、模型调用降级时，是否有日志记录
+2、加密存储怎么实现；存储方案建议
+
+
+
+
+
+
+
+3. 换用便宜模型做开发测试
+当前默认模型列表：
+
+用途	当前模型	建议替代
+文本	claude-sonnet-4-6	deepseek-chat / gpt-3.5-turbo
+Fallback	gpt-5.4	deepseek-chat
+分镜	gpt-4o	gpt-4o-mini
+搜索	perplexity/sonar-pro	跳过或禁用
+通过 .env 覆盖即可立即生效。
+
+每次测试 调用大模型，都花费很多钱，评价下以下方案
+ 
+1. 缓存 LLM 响应（Recorder/VCR 模式）
+参考 vcrpy 或 pytest-recording 的思路：
+
+第一次跑测试时真实调用 API（或本地 LLM），把响应序列化存到文件
+后续测试直接回放缓存，零 API 消费
+写一个 LLMCache 包装类，根据 (model, messages_hash) 作为 key
+
+2. 抽离纯逻辑测试，不要每轮都调 LLM
+把你的 Pipeline 拆成：
+
+纯逻辑层：数据校验、字段提取、格式转换等 → 用 pytest 测，不依赖 LLM
+集成层：仅 pipeline 定型后偶尔跑一次全流程
+skill_loader.py、pipeline_runner.py 中有大量解析、格式化逻辑可以单独测试。
+
+3. 加一个 DRY_RUN 开关
+在 llm_client.py 开头加一个环境变量如 NIAN_DRY_RUN=1，所有 call_skill() / call_memorial_chat() 直接返回预设 JSON，跳过真实 API 调用。
+
+
+
+

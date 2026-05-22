@@ -15,6 +15,8 @@ except Exception:
 
 from core import security, storage
 from core import memory as memory_mod
+from logger import api_logger
+
 
 router = APIRouter(prefix="/agent", tags=["agent-realtime"])
 
@@ -200,7 +202,7 @@ async def realtime_proxy(client_ws: WebSocket):
                 except WebSocketDisconnect:
                     pass
                 except Exception as e:
-                    print(f"[realtime] c2u closed: {e}")
+                    api_logger.debug("[realtime] c2u closed: %s", e)
 
             async def upstream_to_client():
                 try:
@@ -231,7 +233,7 @@ async def realtime_proxy(client_ws: WebSocket):
                             pass
                         await client_ws.send_text(text)
                 except Exception as e:
-                    print(f"[realtime] u2c closed: {e}")
+                    api_logger.debug("[realtime] u2c closed: %s", e)
 
             tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

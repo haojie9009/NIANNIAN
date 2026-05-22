@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from core import security, storage
 from core import memory as memory_mod
+from logger import api_logger
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -66,7 +67,7 @@ def _persist_and_extract(user_id: str, memorial_id: str, user_msg: str, ai_reply
             {"role": "assistant", "content": ai_reply},
         ])
     except Exception as e:
-        print("[persist] append failed:", e)
+        api_logger.exception("[persist] append failed: %s", e)
 
     if not os.getenv("DASHSCOPE_API_KEY"):
         return
@@ -115,7 +116,7 @@ product_intent.primary 只能是 "video" / "biography" / "digital_human" / "" �
             return
         storage.merge_dossier(user_id, memorial_id, patch)
     except Exception as e:
-        print("[extract] failed:", e)
+        api_logger.exception("[extract] failed: %s", e)
 
     # 提取完顺便看看要不要刷新长期记忆 brief（关键词触发 / 每 4 轮）
     try:

@@ -97,11 +97,21 @@ def scenes(sid: str) -> Dict[str, Any]:
 
 @router.post("/scene/video/{sid}/{idx}")
 def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
-    """为单个分镜生成短视频（image_url 可为 data URL 或 https URL）"""
+    """为单个分镜提交视频生成任务，立即返回 task_id（异步，不阻塞）"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
     image_url = (payload or {}).get("image_url", "")
     return sm.gen_scene_video(sid, idx, image_url)
+
+
+@router.get("/scene/video/status/{sid}/{idx}/{task_id}")
+def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai") -> Dict[str, Any]:
+    """轮询视频任务状态。完成后自动下载到本地并返回 URL。"""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return sm.poll_scene_video(task_id, source, sid, idx)
 

@@ -29,6 +29,9 @@ import requests as _requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
+import logging as _logging
+_llm_log = _logging.getLogger("niannian.llm")
+
 load_dotenv()
 
 # ── 302.ai 网关 ───────────────────────────────────────────────────────────────
@@ -825,6 +828,7 @@ def generate_video_302ai_i2v(
     duration: int = 5,
     poll: bool = True,
     max_wait: int = 600,
+    _task_id_only: Optional[str] = None,  # 只轮询已有 task_id，跳过提交
 ) -> Dict[str, Any]:
     """
     通过 302.ai 调用 Kling 2.6 图生视频（5s）。
@@ -846,56 +850,58 @@ def generate_video_302ai_i2v(
 
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    # 构建 multipart/form-data 请求体
-    files: Dict[str, Any] = {}
-    data: Dict[str, Any] = {
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "cfg": str(cfg),
-        "duration": str(duration),
-    }
+    # 只轮询已有任务，跳过提交阶段
+    if _task_id_only:
+        task_id = _task_id_only
+        poll = True
+        max_wait = max(max_wait, 1)
+    else:
+        # 构建 multipart/form-data 请求体
+        files: Dict[str, Any] = {}
+        data: Dict[str, Any] = {
+            "prompt": prompt,
+            "enable_audio": "false",
+        }
 
-    if image_b64_or_url:
-        if image_b64_or_url.startswith("data:"):
-            # base64 data URL → 解码为字节，作为文件上传
-            try:
-                header_part, b64_part = image_b64_or_url.split(",", 1)
-                mime = header_part.split(":")[1].split(";")[0]
-                ext = mime.split("/")[-1] if "/" in mime else "png"
-                img_bytes = base64.b64decode(b64_part)
-                files["image"] = (f"frame.{ext}", img_bytes, mime)
-            except Exception as e:
-                return {"error": f"base64 图片解析失败：{e}", "source": "302ai"}
-        else:
-            # 已是 HTTPS URL，直接作为文本字段传入
-            data["image"] = image_b64_or_url
+        if image_b64_or_url:
+            if image_b64_or_url.startswith("data:"):
+                try:
+                    header_part, b64_part = image_b64_or_url.split(",", 1)
+                    mime = header_part.split(":")[1].split(";")[0]
+                    ext = mime.split("/")[-1] if "/" in mime else "png"
+                    img_bytes = base64.b64decode(b64_part)
+                    files["input_image"] = (f"frame.{ext}", img_bytes, mime)
+                except Exception as e:
+                    return {"error": f"base64 图片解析失败：{e}", "source": "302ai"}
+            else:
+                data["input_image"] = image_b64_or_url
 
-    try:
-        r = _requests.post(
-            _302_VIDEO_I2V_URL,
-            headers=headers,
-            files=files if files else None,
-            data=data,
-            timeout=60,
-        )
         try:
-            resp = r.json()
-        except Exception:
-            return {"error": f"302.ai 响应非 JSON (status={r.status_code})：{r.text[:300]}", "source": "302ai"}
-    except Exception as e:
-        return {"error": f"302.ai 提交请求异常：{e}", "source": "302ai"}
+            r = _requests.post(
+                _302_VIDEO_I2V_URL,
+                headers=headers,
+                files=files if files else None,
+                data=data,
+                timeout=60,
+            )
+            try:
+                resp = r.json()
+            except Exception:
+                return {"error": f"302.ai 响应非 JSON (status={r.status_code})：{r.text[:300]}", "source": "302ai"}
+        except Exception as e:
+            return {"error": f"302.ai 提交请求异常：{e}", "source": "302ai"}
 
-    if resp.get("status") != 200 or resp.get("result") != 1:
-        return {"error": f"302.ai 提交失败：{resp.get('message', str(resp))}", "source": "302ai"}
+        if resp.get("status") != 200 or resp.get("result") != 1:
+            return {"error": f"302.ai 提交失败：{resp.get('message', str(resp))}", "source": "302ai"}
 
-    task_id = resp.get("data", {}).get("task", {}).get("id", "")
-    if not task_id:
-        return {"error": f"302.ai 未返回 task_id：{resp}", "source": "302ai"}
+        task_id = resp.get("data", {}).get("task", {}).get("id", "")
+        if not task_id:
+            return {"error": f"302.ai 未返回 task_id：{resp}", "source": "302ai"}
 
-    _log302i.info(f"[302ai_i2v] 提交成功 task_id={task_id}")
+        _llm_log.info("[302ai_i2v] 提交成功 task_id=%s", task_id)
 
-    if not poll:
-        return {"task_id": task_id, "status": 5, "source": "302ai"}
+        if not poll:
+            return {"task_id": task_id, "status": 5, "source": "302ai"}
 
     # ── 轮询等待完成 ──
     elapsed = 0
@@ -925,6 +931,7 @@ def generate_video_302ai_i2v(
         except Exception:
             pass
 
+    _llm_log.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
     return {"task_id": task_id, "status": 10, "source": "302ai",
             "error": f"302.ai 等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
@@ -940,6 +947,7 @@ def generate_video_kling(
     sound: str = "off",
     poll: bool = True,
     max_wait: int = 600,
+    _task_id_only: Optional[str] = None,  # 只轮询已有 task_id，跳过提交
 ) -> Dict[str, Any]:
     """
     调用可灵官方 API（kling-v3）生成视频。
@@ -956,6 +964,16 @@ def generate_video_kling(
     """
     import logging as _logv
     _log_v = _logv.getLogger("llm_client.video")
+
+    # ── 0. 只轮询已有任务，跳过提交 ─────────────────────────────────────────
+    if _task_id_only:
+        if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
+            return generate_video_302ai_i2v(
+                prompt="", _task_id_only=_task_id_only, poll=True, max_wait=max(max_wait, 1),
+            )
+        # 走可灵官方轮询（跳到轮询循环，task_id 已知）
+        poll = True
+        max_wait = max(max_wait, 1)
 
     # ── 1. 若未配置可灵官方 key，直接走 302.ai ───────────────────────────────
     if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
@@ -1030,41 +1048,44 @@ def generate_video_kling(
             _log_v.warning("[video] 尾帧图处理失败，忽略 image_tail 字段继续提交")
 
     submit_url = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video"
-    try:
-        r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
+    if _task_id_only:
+        # 跳过提交，直接进入轮询
+        task_id = _task_id_only
+    else:
         try:
-            resp_data = r.json()
-        except Exception:
-            _log_v.warning(f"[video] 官方 API 响应非 JSON，fallback 到 302.ai")
+            r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
+            try:
+                resp_data = r.json()
+            except Exception:
+                _log_v.warning("[video] 官方 API 响应非 JSON，fallback 到 302.ai")
+                return generate_video_302ai_i2v(
+                    prompt=prompt, image_b64_or_url=image_url,
+                    duration=duration, poll=poll, max_wait=max_wait,
+                )
+        except Exception as e:
+            _log_v.warning(f"[video] 官方 API 请求异常，fallback 到 302.ai：{e}")
             return generate_video_302ai_i2v(
                 prompt=prompt, image_b64_or_url=image_url,
                 duration=duration, poll=poll, max_wait=max_wait,
             )
-    except Exception as e:
-        _log_v.warning(f"[video] 官方 API 请求异常，fallback 到 302.ai：{e}")
-        return generate_video_302ai_i2v(
-            prompt=prompt, image_b64_or_url=image_url,
-            duration=duration, poll=poll, max_wait=max_wait,
-        )
 
-    # 官方响应：{"code":0, "message":"SUCCEED", "data":{"task_id":"...", "task_status":"submitted"}}
-    if resp_data.get("code", -1) != 0:
-        _log_v.warning(f"[video] 官方 API 提交失败 code={resp_data.get('code')}，fallback 到 302.ai")
-        return generate_video_302ai_i2v(
-            prompt=prompt, image_b64_or_url=image_url,
-            duration=duration, poll=poll, max_wait=max_wait,
-        )
+        if resp_data.get("code", -1) != 0:
+            _log_v.warning(f"[video] 官方 API 提交失败 code={resp_data.get('code')}，fallback 到 302.ai")
+            return generate_video_302ai_i2v(
+                prompt=prompt, image_b64_or_url=image_url,
+                duration=duration, poll=poll, max_wait=max_wait,
+            )
 
-    task_id = resp_data.get("data", {}).get("task_id", "")
-    if not task_id:
-        _log_v.warning(f"[video] 官方 API 未返回 task_id，fallback 到 302.ai")
-        return generate_video_302ai_i2v(
-            prompt=prompt, image_b64_or_url=image_url,
-            duration=duration, poll=poll, max_wait=max_wait,
-        )
+        task_id = resp_data.get("data", {}).get("task_id", "")
+        if not task_id:
+            _log_v.warning("[video] 官方 API 未返回 task_id，fallback 到 302.ai")
+            return generate_video_302ai_i2v(
+                prompt=prompt, image_b64_or_url=image_url,
+                duration=duration, poll=poll, max_wait=max_wait,
+            )
 
-    if not poll:
-        return {"task_id": task_id, "status": "submitted", "source": "kling", "debug_body": body}
+        if not poll:
+            return {"task_id": task_id, "status": "submitted", "source": "kling"}
 
     # ── 轮询等待完成 ──────────────────────────────────────────────────────────
     poll_url  = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video/{task_id}"
@@ -1103,6 +1124,7 @@ def generate_video_kling(
         except Exception:
             pass
 
+    _llm_log.error("Kling 等待超时（%ds），task_id=%s", max_wait, task_id)
     return {"task_id": task_id, "status": "processing", "source": "kling",
             "error": f"等待超时（{max_wait}s），可手动轮询 task_id={task_id}"}
 

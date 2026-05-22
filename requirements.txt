@@ -7,12 +7,16 @@ requests>=2.31.0
 PyJWT>=2.8.0
 Pillow>=10.0.0
 
-# °¢ÀïÔÆ OSS£¨Êý¾Ý³Ö¾Ã»¯¾µÏñ£¬¿ÉÑ¡£©
+# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ OSSï¿½ï¿½ï¿½ï¿½ï¿½Ý³Ö¾Ã»ï¿½ï¿½ï¿½ï¿½ñ£¬¿ï¿½Ñ¡ï¿½ï¿½
 oss2>=2.18.0
-# FastAPI + Auth£¨ÔËÐÐºó¶Ë±Ø±¸£©
+# FastAPI + Authï¿½ï¿½ï¿½ï¿½ï¿½Ðºï¿½Ë±Ø±ï¿½ï¿½ï¿½
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
 bcrypt>=4.1.0
 websockets>=12.0
 dashscope>=1.20.0
+pytest>=8.0.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+

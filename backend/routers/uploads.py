@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import FileResponse
 from openai import OpenAI
 from core import security, storage
+from logger import api_logger
 
 router = APIRouter(prefix="/memorials", tags=["uploads"])
 
@@ -59,7 +60,7 @@ def _auto_tag(filename: str, kind: str, description: str) -> dict:
         if i >= 0 and j > i:
             return json.loads(txt[i:j+1])
     except Exception as e:
-        print("[auto_tag] failed:", e)
+        api_logger.exception("[auto_tag] failed: %s", e)
     return fallback
 
 

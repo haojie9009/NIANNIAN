@@ -193,25 +193,79 @@ async function genSceneImage(idx) {
   }
 }
 
-// ───── 单镜视频生成 ─────
+// ───── 单镜视频生成（异步提交 + 轮询）─────
 async function genSceneVideo(idx) {
   const sc = state.scenes[idx];
   if (!sc || !sc._img_url) { toast('请先生成图片'); return; }
+
+  if (sc._vid_poll) {
+    clearInterval(sc._vid_poll);
+    sc._vid_poll = null;
+  }
+
   sc._vid_status = 'run';
+  sc._vid_url    = null;
   renderScenes();
+
+  let taskId, taskSource;
   try {
     const res = await apiPost(`/pipeline/scene/video/${state.sid}/${idx}`, {
       image_url: sc._img_url,
     });
-    if (res.error) throw new Error(res.message || '视频生成失败');
-    sc._vid_url    = res.url || res.video_url;
-    sc._vid_status = 'done';
+    if (res.error) throw new Error(res.message || '视频提交失败');
+    taskId     = res.task_id;
+    taskSource = res.source || '';
   } catch (e) {
     sc._vid_status = 'err';
-    toast('视频生成失败：' + e.message);
-  } finally {
+    toast('视频提交失败：' + e.message);
     renderScenes();
+    return;
   }
+
+  sc._vid_task_id     = taskId;
+  sc._vid_task_source = taskSource;
+
+  const MAX_POLLS = 120;
+  let   pollCount = 0;
+
+  sc._vid_poll = setInterval(async () => {
+    if (state.scenes[idx] !== sc) {
+      clearInterval(sc._vid_poll);
+      sc._vid_poll = null;
+      return;
+    }
+
+    pollCount++;
+    if (pollCount > MAX_POLLS) {
+      clearInterval(sc._vid_poll);
+      sc._vid_poll   = null;
+      sc._vid_status = 'err';
+      toast(`视频生成超时（分镜 ${idx + 1}）`);
+      renderScenes();
+      return;
+    }
+
+    try {
+      const r = await apiGet(
+        `/pipeline/scene/video/status/${state.sid}/${idx}/${taskId}?source=${encodeURIComponent(taskSource)}`
+      );
+      if (r.status === 'done') {
+        clearInterval(sc._vid_poll);
+        sc._vid_poll   = null;
+        sc._vid_url    = r.url;
+        sc._vid_status = 'done';
+        renderScenes();
+      } else if (r.status === 'failed') {
+        clearInterval(sc._vid_poll);
+        sc._vid_poll   = null;
+        sc._vid_status = 'err';
+        toast(`视频生成失败（分镜 ${idx + 1}）：` + (r.message || '未知错误'));
+        renderScenes();
+      }
+    } catch (e) {
+      console.warn(`[vid poll ${idx}] 轮询出错：`, e.message);
+    }
+  }, 10_000);
 }
 
 // ───── 最终合成 MV06 ─────
