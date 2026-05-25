@@ -11,10 +11,16 @@
     var m = location.search.match(/[?&]mid=([^&]+)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
+  var DEFAULT_VOICE = {
+    voice_id: '', provider: '', status: 'idle', samples: [],
+    params: { speed: 1.0, pitch: 0, volume: 1.0, emotion: 'neutral', base_voice: 'longxiaochun' },
+    preview_text: '今天天气真好，我们一起去散步吧。',
+    last_clone_at: '', history: [], error: '',
+  };
   var state = {
     mid: getMidFromUrl() || NianAuth.getActiveMemorialId() || '',
     memorials: [],
-    voice: null,
+    voice: JSON.parse(JSON.stringify(DEFAULT_VOICE)),
     audios: [],
     presets: [],
     selected: new Set(),
@@ -61,13 +67,22 @@
     }
     try {
       var r = await NianAuth.fetch('/api/memorials/' + state.mid + '/voice');
-      var d = await r.json();
-      state.voice = d.voice;
+      var raw = await r.text();
+      var d = {};
+      try { d = JSON.parse(raw); } catch(_) {}
+      if (!r.ok) {
+        console.error('[voice] load failed', r.status, raw.slice(0,300));
+        $('vsStatusText').textContent = '加载失败 HTTP ' + r.status + '：' + (d.detail || raw.slice(0,120));
+        return;
+      }
+      state.voice = Object.assign({}, DEFAULT_VOICE, d.voice || {});
+      state.voice.params = Object.assign({}, DEFAULT_VOICE.params, (d.voice && d.voice.params) || {});
       state.audios = d.audio_assets || [];
       state.presets = d.preset_voices || [];
       state.selected = new Set(state.voice.samples || []);
       renderAll();
     } catch(e) {
+      console.error('[voice] load exception', e);
       $('vsStatusText').textContent = '加载失败：' + e.message;
     }
   }
@@ -88,7 +103,7 @@
       idle:    '尚未克隆 · 选择音频样本后即可开始',
       cloning: '克隆中...',
       ready:   '✓ 已就绪 · DashScope 克隆成功 · voice_id=' + (state.voice.voice_id||'').slice(0,32),
-      mock:    '⚠ Mock 模式（DashScope 未配置或样本不可公网访问，先用预制音色试听）',
+      mock:    '⚠ Mock 模式 · 原因：' + (state.voice.error || 'DashScope 未配置或样本不可公网访问') + '（先用预制音色试听）',
       failed:  '✗ 失败：' + (state.voice.error || '未知错误'),
     };
     txt.textContent = map[s] || s;
@@ -104,13 +119,16 @@
     state.audios.forEach(function(a){
       var row = document.createElement('div');
       row.className = 'vs-sample' + (state.selected.has(a.asset_id) ? ' selected' : '');
+      // 音频 URL 必须带 token，因为 <audio> 不会发 Authorization header
+      var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
+      var audioUrl = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
       row.innerHTML =
         '<div class="chk"></div>' +
         '<div class="info">' +
           '<div class="name">' + esc(a.filename || a.asset_id) + '</div>' +
           '<div class="desc">' + esc(a.description || a.summary || '未填描述') + '</div>' +
         '</div>' +
-        '<audio src="' + a.url + '" controls preload="none"></audio>';
+        '<audio src="' + audioUrl + '" controls preload="metadata"></audio>';
       row.addEventListener('click', function(e){
         if (e.target.tagName === 'AUDIO' || e.target.closest('audio')) return;
         if (state.selected.has(a.asset_id)) state.selected.delete(a.asset_id);

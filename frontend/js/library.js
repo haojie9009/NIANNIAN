@@ -149,7 +149,10 @@
     }
     state.assets.forEach(function(a){
       var li = document.createElement('li');
-      var thumb = (a.kind === 'image') ? '<img src="' + a.url + '" alt="">' : iconForKind(a.kind);
+      // 资产 URL 必须带 token（img/audio 不会发 Authorization header）
+      var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
+      var aUrl = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+      var thumb = (a.kind === 'image') ? '<img src="' + aUrl + '" alt="">' : iconForKind(a.kind);
       var tags = (a.tags || []).map(function(t){return '<span>' + escapeHtml(t) + '</span>';}).join('');
       li.innerHTML =
         '<div class="asset-thumb">' + thumb + '</div>' +

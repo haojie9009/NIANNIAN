@@ -39,10 +39,18 @@ services:
         sync: false
       - key: OSS_PREFIX
         value: nian/
+      # ─── 声音克隆：DashScope 需要公网 URL 拉样本 ───
+      # 填你的 Render 公网域名，例如 https://niannian-memorial.onrender.com
+      - key: PUBLIC_BASE_URL
+        sync: false
     healthCheckPath: /api/health
-    # ─── 持久化磁盘（避免重启丢失用户数据）───
-    # 免费层不支持 Disk，需要升到 Starter($7/月) 或先把 disk 段注释掉
-    disk:
-      name: niannian-data
-      mountPath: /var/data
-      sizeGB: 1
+    # ─── 持久化磁盘（重要）───
+    # ⚠️ 注意：此处 disk 段已注释，避免与 Render Dashboard 手动添加的 Disk 冲突。
+    # 历史教训：render.yaml 的 disk 段和 Dashboard 的 Disk 同时存在时，
+    # Render 可能在 deploy 时重建挂载卷，导致数据被清空（2025-XX 事件）。
+    # 现在以 Dashboard 上手动挂载的 Disk(/var/data, 1GB) 为唯一来源。
+    # 如要重新启用 IaC 管理，请先在 Dashboard 移除现有 Disk，再取消下面注释。
+    # disk:
+    #   name: niannian-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

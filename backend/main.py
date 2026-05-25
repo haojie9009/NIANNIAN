@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice
+from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin
 from core import oss_sync, storage as _storage  # noqa: F401
 from logger import app_logger, api_logger
 from services import session_store
@@ -47,17 +47,91 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-# 启动：如启用 OSS，则从 OSS 镜像拉回本地（容器重启/扩容不丢数据）
+# 启动：自检 + OSS 拉回 + 本地快照恢复（多重保险，确保数据不丢）
 @app.on_event("startup")
 def _nian_bootstrap():
+    from core import storage as _s
+    import os, json
+    data_dir = _s.DATA_DIR
+    print(f"[storage] DATA_DIR = {data_dir}")
+    print(f"[storage] NIAN_DATA_DIR env = {os.environ.get('NIAN_DATA_DIR', '(unset)')}")
+    print(f"[storage] DATA_DIR exists = {data_dir.exists()}, is mount = {data_dir.is_mount() if hasattr(data_dir, 'is_mount') else 'n/a'}")
+
+    # 1) OSS 镜像拉回（最强保险）
     try:
         if oss_sync.enabled():
             print("[oss] enabled, bootstrap pulling from OSS...")
             oss_sync.bootstrap_pull()
         else:
-            print("[oss] disabled (using local filesystem only)")
+            print("[oss] DISABLED — 数据仅靠本地 Disk，强烈建议接 OSS 防丢失")
     except Exception as e:
         print(f"[oss] bootstrap failed: {e}")
+
+    # 2) 启动后清点数据，方便用户立刻在 Render Logs 看到
+    try:
+        _s._ensure()
+        users = _s.list_users()
+        total_mem = 0
+        for u in users:
+            try:
+                total_mem += len(_s.list_memorials(u.get("user_id", "")))
+            except Exception:
+                pass
+        print(f"[storage] 启动清点：{len(users)} 用户，{total_mem} 个纪念对象")
+
+        # 3) 数据丢失检测：上次有用户、这次没了 → 写报警标记
+        marker = data_dir / ".last_user_count"
+        if marker.exists():
+            try:
+                prev = int(marker.read_text(encoding="utf-8").strip() or "0")
+            except Exception:
+                prev = 0
+            if prev > 0 and len(users) == 0:
+                print(f"⚠️⚠️⚠️ [DATA LOSS DETECTED] 上次启动有 {prev} 个用户，本次为 0！")
+                print(f"⚠️ 请立刻检查 Render Disk 挂载状态和 OSS 配置")
+                # 写一个看得到的报警文件
+                (data_dir / "DATA_LOSS_WARNING.txt").write_text(
+                    f"启动时检测到数据丢失！上次={prev} 当前=0\nDATA_DIR={data_dir}\nNIAN_DATA_DIR={os.environ.get('NIAN_DATA_DIR','')}",
+                    encoding="utf-8"
+                )
+        try:
+            marker.write_text(str(len(users)), encoding="utf-8")
+        except Exception:
+            pass
+
+        # 4) 启动自动快照（保留最近 10 份），写到 DATA_DIR/_backups/
+        try:
+            _create_startup_snapshot(data_dir)
+        except Exception as e:
+            print(f"[snapshot] failed: {e}")
+    except Exception as e:
+        print(f"[storage] bootstrap diag failed: {e}")
+
+
+def _create_startup_snapshot(data_dir):
+    """启动时打个 zip 快照，保留最近 10 份。"""
+    import zipfile, time
+    from pathlib import Path
+    backups = Path(data_dir) / "_backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    snap = backups / f"snapshot_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+    n = 0
+    with zipfile.ZipFile(snap, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in Path(data_dir).rglob("*"):
+            # 排除自己的备份目录，避免雪球
+            if "_backups" in p.parts:
+                continue
+            if p.is_file():
+                z.write(p, arcname=str(p.relative_to(data_dir)))
+                n += 1
+    print(f"[snapshot] created {snap.name} ({n} files)")
+    # 清理：只保留最近 10 份
+    snaps = sorted(backups.glob("snapshot_*.zip"))
+    for old in snaps[:-10]:
+        try:
+            old.unlink()
+        except Exception:
+            pass
 
 # CORS（开发阶段全开，生产收紧）
 app.add_middleware(
@@ -94,6 +168,7 @@ app.include_router(auth.router,     prefix="/api")
 app.include_router(memorials.router, prefix="/api")
 app.include_router(uploads.router,  prefix="/api")
 app.include_router(voice.router,    prefix="/api")
+app.include_router(admin.router,    prefix="/api")
 
 # 生成资源静态托管（图片/视频本地持久化）
 _GENERATED = _BACKEND.parent / "backend" / "outputs" / "generated"

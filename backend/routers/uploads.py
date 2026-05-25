@@ -117,8 +117,28 @@ def list_assets(mid: str, user = Depends(security.get_current_user)):
 
 
 @router.get("/{mid}/assets/{aid}")
-def get_asset_file(mid: str, aid: str, user = Depends(security.get_current_user)):
-    uid = user["user_id"]
+def get_asset_file(mid: str, aid: str, token: str = "", authorization: str = __import__("fastapi").Header(default="")):
+    """资产文件下载。
+    认证：优先 Authorization Bearer header；如果没有，则接受 ?token=<jwt> query 参数
+    （供 <audio>/<img> 标签直接加载，因为它们无法设置 header）。
+    """
+    tok = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        tok = authorization.split(" ", 1)[1].strip()
+    elif token:
+        tok = token.strip()
+    if not tok:
+        raise HTTPException(401, "缺少登录令牌")
+    try:
+        payload = security.decode_token(tok)
+        uid = payload.get("sub") or payload.get("user_id")
+        if not uid:
+            raise HTTPException(401, "无效令牌")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "无效令牌")
+
     assets = storage.list_assets(uid, mid)
     a = next((x for x in assets if x.get("asset_id") == aid), None)
     if not a:
@@ -127,6 +147,43 @@ def get_asset_file(mid: str, aid: str, user = Depends(security.get_current_user)
     if not p.exists():
         raise HTTPException(404, "文件已删除")
     return FileResponse(str(p), media_type=a.get("mime", "application/octet-stream"), filename=a.get("filename") or a.get("stored_name"))
+
+
+@router.get("/{mid}/assets/{aid}/raw")
+def get_asset_raw(mid: str, aid: str, sig: str = ""):
+    """公开下载链接：用于把样本提交给 DashScope（需要公网可访问）。
+    安全：用 HMAC 短签名校验，sig = hmac_sha256(JWT_SECRET, f"{mid}:{aid}")[:16]
+    """
+    import hmac, hashlib
+    expected = hmac.new(
+        security.JWT_SECRET.encode("utf-8"),
+        f"{mid}:{aid}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+    if not sig or not hmac.compare_digest(sig, expected):
+        raise HTTPException(401, "签名无效")
+    # 遍历所有用户找到这个 asset（公开链接不带 uid）
+    for u in storage.list_users():
+        uid = u.get("user_id", "")
+        if not uid:
+            continue
+        assets = storage.list_assets(uid, mid)
+        a = next((x for x in assets if x.get("asset_id") == aid), None)
+        if a:
+            p = storage.memorial_dir(uid, mid) / "assets" / a.get("stored_name", "")
+            if p.exists():
+                return FileResponse(str(p), media_type=a.get("mime", "application/octet-stream"))
+    raise HTTPException(404, "文件不存在")
+
+
+def make_asset_sig(mid: str, aid: str) -> str:
+    """给指定 asset 生成公开签名，供 voice clone 用。"""
+    import hmac, hashlib
+    return hmac.new(
+        security.JWT_SECRET.encode("utf-8"),
+        f"{mid}:{aid}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
 
 
 class AssetPatchReq(__import__("pydantic").BaseModel):
