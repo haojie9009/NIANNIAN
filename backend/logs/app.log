@@ -1,0 +1,494 @@
+2026-05-21 11:21:25 [INFO] niannian.api - GET /static/memorial.html 304 1811ms
+2026-05-21 11:21:25 [INFO] niannian.api - GET /static/css/style.css 304 6ms
+2026-05-21 11:21:25 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 11:21:26 [INFO] niannian.api - GET /api/intake/session/6471d4a22bb245b592a32f4ef9a3511f 404 4ms
+2026-05-21 11:21:28 [INFO] niannian.api - GET /static/memorial.html 304 4ms
+2026-05-21 11:21:29 [INFO] niannian.api - GET /api/intake/session/6471d4a22bb245b592a32f4ef9a3511f 404 2ms
+2026-05-21 11:27:21 [INFO] niannian.api - GET /static/memorial.html 304 1379ms
+2026-05-21 11:27:24 [INFO] niannian.api - GET /api/intake/session/6471d4a22bb245b592a32f4ef9a3511f 404 4ms
+2026-05-21 11:33:21 [INFO] niannian.api - GET /static/memorial.html 304 1104ms
+2026-05-21 11:33:22 [INFO] niannian.api - GET /static/memorial.html 200 3ms
+2026-05-21 11:33:22 [INFO] niannian.api - GET /static/css/style.css 304 2ms
+2026-05-21 11:33:23 [INFO] niannian.api - GET /api/intake/session/6471d4a22bb245b592a32f4ef9a3511f 404 4ms
+2026-05-21 11:33:29 [INFO] niannian.api - GET /static/deep_search.html 200 3ms
+2026-05-21 11:33:29 [INFO] niannian.api - GET /static/js/deep_search.js 200 3ms
+2026-05-21 11:33:36 [INFO] niannian.api - GET /api/intake/session/6471d4a22bb245b592a32f4ef9a3511f 404 3ms
+2026-05-21 11:33:37 [INFO] niannian.api - GET /api/intake/test-data 200 6ms
+2026-05-21 11:33:37 [INFO] niannian.api - POST /api/intake/submit 200 4ms
+2026-05-21 11:33:40 [INFO] niannian.api - POST /api/intake/submit 200 2ms
+2026-05-21 11:33:54 [INFO] niannian.api - POST /api/chat/greeting 200 14388ms
+2026-05-21 11:34:01 [INFO] niannian.api - GET /static/memorial.html 304 7ms
+2026-05-21 11:34:02 [INFO] niannian.api - GET /api/intake/session/a06d4d959df24ebab80f1b37ee71433b 200 2ms
+2026-05-21 11:34:08 [INFO] niannian.api - GET /static/index.html 304 7ms
+2026-05-21 11:34:09 [INFO] niannian.api - GET /static/css/index-hero.css 304 3ms
+2026-05-21 11:34:09 [INFO] niannian.api - GET /static/js/silk-bg.js 304 3ms
+2026-05-21 11:34:09 [INFO] niannian.api - GET /static/js/auth.js 304 3ms
+2026-05-21 11:34:09 [INFO] niannian.api - GET /static/js/agent.js 304 2ms
+2026-05-21 11:34:10 [INFO] niannian.api - POST /api/agent/chat 200 21ms
+2026-05-21 11:34:12 [INFO] niannian.api - GET /api/intake/session/a06d4d959df24ebab80f1b37ee71433b 200 5ms
+2026-05-21 11:34:29 [INFO] niannian.api - GET /api/intake/test-data 200 0ms
+2026-05-21 11:34:29 [INFO] niannian.api - POST /api/intake/submit 200 2ms
+2026-05-21 11:35:18 [INFO] niannian.api - POST /api/intake/submit 200 0ms
+2026-05-21 11:35:24 [INFO] niannian.api - GET /api/intake/session/a06d4d959df24ebab80f1b37ee71433b 200 4ms
+2026-05-21 11:35:35 [INFO] niannian.api - POST /api/pipeline/preview/a06d4d959df24ebab80f1b37ee71433b 200 10858ms
+2026-05-21 11:38:21 [INFO] niannian.api - POST /api/pipeline/run-all/a06d4d959df24ebab80f1b37ee71433b 200 137825ms
+2026-05-21 12:02:58 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 12:07:58 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:34:27 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:37:23 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:37:37 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:42:37 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:47:38 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:57:58 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 14:58:03 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 15:02:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 15:03:31 [INFO] niannian.api - GET /static/pipeline.html 304 2805ms
+2026-05-21 15:03:31 [INFO] niannian.api - GET /static/css/style.css 304 7ms
+2026-05-21 15:03:31 [INFO] niannian.api - GET /static/js/api.js 304 8ms
+2026-05-21 15:03:31 [INFO] niannian.api - GET /static/js/pipeline.js 304 11ms
+2026-05-21 15:03:32 [INFO] niannian.api - GET /api/intake/session/a06d4d959df24ebab80f1b37ee71433b 404 4ms
+2026-05-21 15:03:33 [INFO] niannian.api - GET /static/js/memorial.js 304 3ms
+2026-05-21 15:03:33 [INFO] niannian.api - GET /api/intake/session/a06d4d959df24ebab80f1b37ee71433b 404 2ms
+2026-05-21 15:03:37 [INFO] niannian.api - GET /api/intake/test-data 200 8ms
+2026-05-21 15:03:37 [INFO] niannian.api - POST /api/intake/submit 200 19ms
+2026-05-21 15:03:41 [INFO] niannian.api - POST /api/intake/submit 200 32ms
+2026-05-21 15:04:29 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:05:14 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:05:14 [INFO] niannian.api - POST /api/chat/greeting 200 92171ms
+2026-05-21 15:05:18 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:07:08 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:07:08 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:07:33 [INFO] niannian.app - health check
+2026-05-21 15:07:33 [INFO] niannian.api - GET /api/health 200 31ms
+2026-05-21 15:08:13 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:08:13 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:08:28 [INFO] niannian.api - GET /static/memorial.html 304 1030ms
+2026-05-21 15:08:29 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 4ms
+2026-05-21 15:08:32 [INFO] niannian.api - GET /api/intake/test-data 200 3ms
+2026-05-21 15:08:32 [INFO] niannian.api - POST /api/intake/submit 200 10ms
+2026-05-21 15:08:35 [INFO] niannian.api - POST /api/intake/submit 200 10ms
+2026-05-21 15:09:21 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:10:05 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:10:05 [INFO] niannian.api - POST /api/chat/greeting 200 90496ms
+2026-05-21 15:16:22 [INFO] niannian.api - GET /static/memorial.html 304 2ms
+2026-05-21 15:16:23 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:16:30 [INFO] niannian.api - GET /api/intake/test-data 200 2ms
+2026-05-21 15:16:30 [INFO] niannian.api - POST /api/intake/submit 200 10ms
+2026-05-21 15:16:40 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 0ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /static/index.html 304 4ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /static/css/index-hero.css 200 4ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /static/js/silk-bg.js 304 3ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /static/js/auth.js 304 3ms
+2026-05-21 15:16:43 [INFO] niannian.api - GET /static/js/agent.js 200 2ms
+2026-05-21 15:16:44 [INFO] niannian.api - POST /api/agent/chat 200 16ms
+2026-05-21 15:16:52 [INFO] niannian.api - POST /api/agent/chat 200 38ms
+2026-05-21 15:17:24 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:17:24 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:17:54 [INFO] niannian.api - GET /static/login.html 200 1051ms
+2026-05-21 15:17:54 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:17:58 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:17:58 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:18:06 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 0ms
+2026-05-21 15:18:06 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 4ms
+2026-05-21 15:18:28 [INFO] niannian.api - POST /api/intake/submit 200 14ms
+2026-05-21 15:19:02 [INFO] niannian.api - POST /api/intake/submit 200 10ms
+2026-05-21 15:19:09 [INFO] niannian.api - POST /api/intake/submit 200 11ms
+2026-05-21 15:19:50 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:19:50 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 8ms
+2026-05-21 15:20:19 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:20:35 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:20:41 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:21:04 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:21:04 [INFO] niannian.api - POST /api/chat/message 200 91198ms
+2026-05-21 15:21:20 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:21:20 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 89153ms
+2026-05-21 15:22:39 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:22:39 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:23:12 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:23:12 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:23:35 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:23:36 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 15:23:44 [INFO] niannian.api - POST /api/intake/submit 200 16ms
+2026-05-21 15:23:55 [INFO] niannian.api - POST /api/intake/submit 200 8ms
+2026-05-21 15:24:05 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:24:05 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:24:51 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:25:36 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，memorial_chat: Connection error.
+2026-05-21 15:25:36 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 90471ms
+2026-05-21 15:26:31 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:26:33 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 5ms
+2026-05-21 15:26:35 [INFO] niannian.api - POST /api/intake/submit 200 13ms
+2026-05-21 15:26:38 [INFO] niannian.api - POST /api/intake/submit 200 15ms
+2026-05-21 15:26:42 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:26:43 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 15:26:45 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2312ms
+2026-05-21 15:26:55 [INFO] niannian.api - POST /api/pipeline/run-all/d4b321274d704ab8813a20a3eddbed3a 200 3149ms
+2026-05-21 15:27:08 [INFO] niannian.api - GET /static/studio.html 304 985ms
+2026-05-21 15:27:08 [INFO] niannian.api - GET /static/js/studio.js 200 3ms
+2026-05-21 15:27:08 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 0ms
+2026-05-21 15:27:09 [INFO] niannian.api - GET /api/pipeline/characters/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:27:09 [INFO] niannian.api - GET /api/pipeline/scenes/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:27:17 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:27:17 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 4ms
+2026-05-21 15:27:20 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2277ms
+2026-05-21 15:27:21 [INFO] niannian.api - POST /api/pipeline/run-all/d4b321274d704ab8813a20a3eddbed3a 200 416ms
+2026-05-21 15:27:29 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:27:30 [INFO] niannian.api - GET /api/pipeline/characters/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 15:27:30 [INFO] niannian.api - GET /api/pipeline/scenes/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 15:27:48 [INFO] niannian.api - POST /api/pipeline/run/MV04/d4b321274d704ab8813a20a3eddbed3a 200 2276ms
+2026-05-21 15:28:32 [INFO] niannian.api - POST /api/pipeline/run/MV06/d4b321274d704ab8813a20a3eddbed3a 200 1ms
+2026-05-21 15:28:54 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:28:54 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:28:57 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2274ms
+2026-05-21 15:29:05 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:29:05 [INFO] niannian.api - GET /static/css/index-hero.css 304 4ms
+2026-05-21 15:29:05 [INFO] niannian.api - GET /static/js/agent.js 304 5ms
+2026-05-21 15:29:06 [INFO] niannian.api - POST /api/agent/chat 200 17ms
+2026-05-21 15:29:16 [INFO] niannian.api - POST /api/agent/chat 200 50ms
+2026-05-21 15:29:44 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:29:55 [INFO] niannian.api - POST /api/intake/deep-search 200 2689ms
+2026-05-21 15:30:23 [INFO] niannian.api - POST /api/intake/apply-fields 200 17ms
+2026-05-21 15:30:24 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 2ms
+2026-05-21 15:30:25 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 15:31:02 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:31:13 [INFO] niannian.api - POST /api/intake/deep-search 200 2651ms
+2026-05-21 15:31:24 [INFO] niannian.api - POST /api/intake/deep-search 200 2662ms
+2026-05-21 15:31:29 [INFO] niannian.api - POST /api/intake/apply-fields 200 9ms
+2026-05-21 15:31:30 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 0ms
+2026-05-21 15:31:30 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 15:31:37 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:31:39 [INFO] niannian.api - POST /api/agent/chat 200 11ms
+2026-05-21 15:31:43 [INFO] niannian.api - GET /static/dialogue.html 200 12ms
+2026-05-21 15:31:44 [INFO] niannian.api - GET /.well-known/appspecific/com.chrome.devtools.json 404 1ms
+2026-05-21 15:31:44 [INFO] niannian.api - GET /static/js/dialogue.js 200 3ms
+2026-05-21 15:33:26 [INFO] niannian.api - POST /api/dialogue/analyze 200 4ms
+2026-05-21 15:35:44 [INFO] niannian.api - POST /api/dialogue/analyze 200 1ms
+2026-05-21 15:35:48 [INFO] niannian.api - POST /api/dialogue/analyze 200 4ms
+2026-05-21 15:37:15 [INFO] niannian.api - POST /api/dialogue/analyze 200 1ms
+2026-05-21 15:43:30 [INFO] niannian.api - GET /static/css/style.css 304 3ms
+2026-05-21 15:43:30 [INFO] niannian.api - GET /static/css/index-hero.css 304 3ms
+2026-05-21 15:43:30 [INFO] niannian.api - GET /static/js/agent.js 304 3ms
+2026-05-21 15:43:35 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 15:43:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 15:43:36 [INFO] niannian.api - POST /api/agent/chat 200 37ms
+2026-05-21 15:43:39 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 4ms
+2026-05-21 15:43:52 [INFO] niannian.api - GET /api/intake/test-data 200 0ms
+2026-05-21 15:43:52 [INFO] niannian.api - POST /api/intake/submit 200 20ms
+2026-05-21 15:44:23 [INFO] niannian.api - POST /api/intake/submit 200 16ms
+2026-05-21 15:44:28 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 1ms
+2026-05-21 15:44:31 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2285ms
+2026-05-21 15:44:32 [INFO] niannian.api - POST /api/pipeline/run-all/d4b321274d704ab8813a20a3eddbed3a 200 2462ms
+2026-05-21 16:01:21 [INFO] niannian.api - GET /static/js/studio.js 304 882ms
+2026-05-21 16:01:21 [INFO] niannian.api - GET /api/pipeline/characters/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 16:01:21 [INFO] niannian.api - GET /api/pipeline/scenes/d4b321274d704ab8813a20a3eddbed3a 200 1ms
+2026-05-21 16:02:27 [INFO] niannian.api - POST /api/pipeline/run/MV04/d4b321274d704ab8813a20a3eddbed3a 200 2266ms
+2026-05-21 16:14:41 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 3ms
+2026-05-21 16:14:43 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2241ms
+2026-05-21 16:14:45 [INFO] niannian.api - POST /api/pipeline/run-all/d4b321274d704ab8813a20a3eddbed3a 200 2451ms
+2026-05-21 16:14:51 [INFO] niannian.api - GET /static/js/studio.js 304 3ms
+2026-05-21 16:14:52 [INFO] niannian.api - GET /api/pipeline/characters/d4b321274d704ab8813a20a3eddbed3a 200 1ms
+2026-05-21 16:14:52 [INFO] niannian.api - GET /api/pipeline/scenes/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 16:53:20 [INFO] niannian.api - GET /static/css/style.css 304 16ms
+2026-05-21 16:53:21 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 16ms
+2026-05-21 16:53:23 [INFO] niannian.api - POST /api/pipeline/preview/d4b321274d704ab8813a20a3eddbed3a 200 2285ms
+2026-05-21 16:53:25 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 2ms
+2026-05-21 16:53:28 [INFO] niannian.api - GET /api/intake/test-data 200 5ms
+2026-05-21 16:53:28 [INFO] niannian.api - POST /api/intake/submit 200 54ms
+2026-05-21 16:53:35 [INFO] niannian.api - GET /static/index.html 304 9ms
+2026-05-21 16:53:35 [INFO] niannian.api - GET /static/css/index-hero.css 304 4ms
+2026-05-21 16:53:35 [INFO] niannian.api - GET /static/js/silk-bg.js 304 4ms
+2026-05-21 16:53:35 [INFO] niannian.api - GET /static/js/auth.js 304 4ms
+2026-05-21 16:53:35 [INFO] niannian.api - GET /static/js/agent.js 304 4ms
+2026-05-21 16:53:37 [INFO] niannian.api - POST /api/agent/chat 200 31ms
+2026-05-21 16:53:42 [INFO] niannian.api - GET /api/intake/session/d4b321274d704ab8813a20a3eddbed3a 200 7ms
+2026-05-21 17:16:46 [INFO] niannian.app - session_store: loaded 1 sessions from disk
+2026-05-21 17:16:46 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 17:16:47 [INFO] niannian.api - GET /docs 200 0ms
+2026-05-21 18:11:20 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 18:11:26 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 18:11:26 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 18:11:30 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:11:34 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:11:38 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 18:11:42 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 18:11:46 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 18:11:50 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 18:11:52 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 18:11:52 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 18:14:34 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 18:14:34 [INFO] niannian.app - session_store: loaded 12 sessions from disk
+2026-05-21 18:14:34 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:34 [INFO] niannian.app - health check
+2026-05-21 18:14:34 [INFO] niannian.api - GET /api/health 200 4ms
+2026-05-21 18:14:34 [INFO] niannian.app - session_store: loaded 12 sessions from disk
+2026-05-21 18:14:34 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:34 [INFO] niannian.app - health check
+2026-05-21 18:14:34 [INFO] niannian.api - GET /api/health 200 2ms
+2026-05-21 18:14:34 [INFO] niannian.app - session_store: loaded 12 sessions from disk
+2026-05-21 18:14:34 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:34 [INFO] niannian.api - POST /api/intake/submit 200 9ms
+2026-05-21 18:14:34 [INFO] niannian.app - session_store: loaded 13 sessions from disk
+2026-05-21 18:14:34 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:34 [INFO] niannian.api - POST /api/intake/submit 200 6ms
+2026-05-21 18:14:34 [INFO] niannian.api - GET /api/intake/session/d02a6d339d724ceaa63cf1e503fae002 200 1ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 14 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - GET /api/intake/session/nonexistent123 404 1ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 14 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - GET /api/intake/test-data 200 1ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 14 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - POST /api/chat 404 0ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 14 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - POST /api/intake/submit 200 5ms
+2026-05-21 18:14:35 [INFO] niannian.api - POST /api/chat 404 1ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 15 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - GET /api/dialogue/health 404 1ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 15 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - POST /api/uploads/ 404 0ms
+2026-05-21 18:14:35 [INFO] niannian.app - session_store: loaded 15 sessions from disk
+2026-05-21 18:14:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:14:35 [INFO] niannian.api - GET /api/pipeline/status/nonexistent 404 2ms
+2026-05-21 18:14:39 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 18:14:39 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 18:14:43 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:14:47 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:14:51 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 18:14:55 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 18:14:59 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 18:15:03 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 18:15:05 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 18:15:05 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 18:16:36 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.app - health check
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/health 200 4ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.app - health check
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/health 200 2ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/submit 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/submit 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/session/nonexistent123 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/test-data 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/message 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/submit 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/submit 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/state/test_dialogue_state_001 404 0ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - POST /api/memorials 401 1ms
+2026-05-21 18:16:36 [INFO] niannian.app - session_store: loaded 26 sessions from disk
+2026-05-21 18:16:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:16:36 [INFO] niannian.api - GET /api/status/nonexistent 404 0ms
+2026-05-21 18:16:40 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 18:16:40 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 18:16:44 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:16:48 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:16:52 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 18:16:56 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 18:17:00 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 18:17:04 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 18:17:06 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 18:17:06 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 18:23:58 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 18:23:58 [INFO] niannian.app - session_store: loaded 37 sessions from disk
+2026-05-21 18:23:58 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:58 [INFO] niannian.app - health check
+2026-05-21 18:23:58 [INFO] niannian.api - GET /api/health 200 2ms
+2026-05-21 18:23:58 [INFO] niannian.app - session_store: loaded 37 sessions from disk
+2026-05-21 18:23:58 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:58 [INFO] niannian.app - health check
+2026-05-21 18:23:58 [INFO] niannian.api - GET /api/health 200 1ms
+2026-05-21 18:23:58 [INFO] niannian.app - session_store: loaded 37 sessions from disk
+2026-05-21 18:23:58 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:58 [INFO] niannian.api - POST /api/intake/submit 200 6ms
+2026-05-21 18:23:58 [INFO] niannian.app - session_store: loaded 38 sessions from disk
+2026-05-21 18:23:58 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:58 [INFO] niannian.api - POST /api/intake/submit 200 4ms
+2026-05-21 18:23:58 [INFO] niannian.api - GET /api/intake/session/40415e8486ec45c89528533ac577864c 200 1ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 39 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - GET /api/intake/session/nonexistent123 404 1ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 39 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - GET /api/intake/test-data 200 1ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 39 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - GET /api/chat/greeting 405 0ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 39 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - POST /api/chat/message 422 1ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 39 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - POST /api/intake/submit 200 3ms
+2026-05-21 18:23:59 [INFO] niannian.api - GET /api/dialogue/health 404 0ms
+2026-05-21 18:23:59 [INFO] niannian.app - session_store: loaded 40 sessions from disk
+2026-05-21 18:23:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 18:23:59 [INFO] niannian.api - GET /api/pipeline/status/nonexistent 404 0ms
+2026-05-21 18:24:03 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 18:24:03 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 18:24:07 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:24:11 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 18:24:15 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 18:24:19 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 18:24:23 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 18:24:27 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 18:24:29 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 18:24:29 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 19:10:35 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 19:10:35 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:35 [INFO] niannian.app - health check
+2026-05-21 19:10:35 [INFO] niannian.api - GET /api/health 200 3ms
+2026-05-21 19:10:35 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:35 [INFO] niannian.app - health check
+2026-05-21 19:10:35 [INFO] niannian.api - GET /api/health 200 0ms
+2026-05-21 19:10:35 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:35 [INFO] niannian.api - POST /api/intake/submit 200 12ms
+2026-05-21 19:10:35 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:35 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:35 [INFO] niannian.api - POST /api/intake/submit 200 12ms
+2026-05-21 19:10:35 [INFO] niannian.api - GET /api/intake/session/001c6a240ea8442daa0ff1eb9739a292 200 2ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - GET /api/intake/session/nonexistent123 404 1ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - GET /api/intake/test-data 200 2ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - GET /api/chat/greeting 405 0ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - POST /api/chat/message 422 2ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - POST /api/intake/submit 200 11ms
+2026-05-21 19:10:36 [INFO] niannian.api - GET /api/dialogue/health 404 0ms
+2026-05-21 19:10:36 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:10:36 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:10:36 [INFO] niannian.api - GET /api/pipeline/status/nonexistent 404 1ms
+2026-05-21 19:10:40 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 19:10:40 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 19:10:44 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 19:10:48 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 19:10:52 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 19:10:56 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 19:11:00 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 19:11:04 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 19:11:06 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 19:11:06 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 19:12:07 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.app - health check
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/health 200 4ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.app - health check
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/health 200 2ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - POST /api/intake/submit 200 8ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - POST /api/intake/submit 200 12ms
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/intake/session/4762cda82ef94c5f816fc2bc546523e7 200 2ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/intake/session/nonexistent123 404 2ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/intake/test-data 200 6ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/chat/greeting 405 0ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - POST /api/chat/message 422 4ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - POST /api/intake/submit 200 7ms
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/dialogue/health 404 0ms
+2026-05-21 19:12:07 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 19:12:07 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 19:12:07 [INFO] niannian.api - GET /api/pipeline/status/nonexistent 404 4ms
+2026-05-21 19:12:11 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 19:12:11 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 19:12:15 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 19:12:19 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 19:12:23 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 19:12:27 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 19:12:31 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 19:12:35 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 19:12:37 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 19:12:37 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
+2026-05-21 21:10:56 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 21:10:58 [INFO] niannian.llm - [llm] LLM 模式: MOCK, text_base=http://localhost:8099/v1, video_base=http://localhost:8099/v1
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.app - health check
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/health 200 14ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.app - health check
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/health 200 9ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - POST /api/intake/submit 200 11ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - POST /api/intake/submit 200 23ms
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/intake/session/987f2138813145b58b488a2124567269 200 6ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/intake/session/nonexistent123 404 6ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/intake/test-data 200 2ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/chat/greeting 405 0ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - POST /api/chat/message 422 8ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - POST /api/intake/submit 200 24ms
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/dialogue/health 404 2ms
+2026-05-21 21:10:59 [INFO] niannian.app - session_store: loaded 0 sessions from disk
+2026-05-21 21:10:59 [INFO] niannian.app - [WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟
+2026-05-21 21:10:59 [INFO] niannian.api - GET /api/pipeline/status/nonexistent 404 5ms
+2026-05-21 21:11:04 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection timeout
+2026-05-21 21:11:04 [INFO] niannian.llm - [llm] claude-sonnet-4-6 降级到 gpt-5.4，skill=MV01 调用成功
+2026-05-21 21:11:08 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 21:11:12 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，skill=MV01: Connection error
+2026-05-21 21:11:16 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，freeform: timeout
+2026-05-21 21:11:20 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，freeform: timeout
+2026-05-21 21:11:24 [WARNING] niannian.llm - [llm] claude-sonnet-4-6 连续3次重试均失败，structured: timeout
+2026-05-21 21:11:28 [WARNING] niannian.llm - [llm] gpt-5.4 连续3次重试均失败，structured: timeout
+2026-05-21 21:11:30 [WARNING] niannian.llm - [llm] gpt-4o 连续3次重试均失败，storyboard: rate limit
+2026-05-21 21:11:30 [INFO] niannian.llm - [llm] gpt-4o 降级到 gpt-5.4，storyboard 成功
