@@ -117,6 +117,18 @@
     </div>
   </section>
 
+  <!-- MV06 合成进度 -->
+  <section id="phaseMV06Progress" class="hidden">
+    <div class="card" style="margin-top:18px;border:1px solid rgba(90,154,114,.3);background:rgba(90,154,114,.05);">
+      <div class="section-label" style="color:var(--green);">影像合成中</div>
+      <div id="mv06ProgressSteps" style="margin-top:12px;"></div>
+      <div id="mv06ProgressLabel" class="text-muted" style="margin-top:10px;font-size:.85rem;"></div>
+      <div style="margin-top:8px;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;">
+        <div id="mv06ProgressFill" style="height:100%;width:0%;background:var(--green);border-radius:3px;transition:width .5s ease;"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- 最终合成 -->
   <section id="phaseFinal" class="hidden">
     <div class="card" style="margin-top:18px;border:1px solid rgba(90,154,114,.3);background:rgba(90,154,114,.05);">

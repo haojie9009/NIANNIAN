@@ -58,8 +58,11 @@ def load_all() -> int:
     return loaded
 
 
-# session 自动清理时间（7 天）
+# session 自动清理时间（7 天未操作即过期）
 _TTL_SEC = 7 * 24 * 3600
+
+# 内存兜底上限：即使未过期，也只保留最近 10 个
+_MAX_SESSIONS = 10
 
 
 def create_session(form_data: Optional[Dict[str, Any]] = None) -> str:
@@ -89,9 +92,26 @@ def create_session(form_data: Optional[Dict[str, Any]] = None) -> str:
                 "message_count":    0,      # 已分析的消息条数
                 "history":          [],     # [{role, content}]
             },
+            "audio":          {},   # {"tts_segments": [...], "bgm": {...}}
         }
         _save(sid)
     return sid
+
+
+def _load_from_disk(sid: str) -> Optional[Dict[str, Any]]:
+    """从磁盘读取单个 session（不经过内存）。"""
+    p = _session_path(sid)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def list_disk_ids() -> list:
+    """列出磁盘上所有 session ID。"""
+    return [f.stem for f in _DATA_DIR.glob("*.json") if f.stem]
 
 
 def get(sid: str) -> Optional[Dict[str, Any]]:
@@ -132,15 +152,30 @@ def patch_form(sid: str, fields: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def gc() -> int:
-    """清理过期 session（内存 + 磁盘）"""
+    """清理过期 session + 超过上限时淘汰最旧的（内存 + 磁盘）"""
     now = time.time()
     removed = 0
     with _LOCK:
-        for sid in list(_SESSIONS.keys()):
-            if now - _SESSIONS[sid]["updated_at"] > _TTL_SEC:
+        # 1) TTL 过期清理
+        expired = [
+            sid for sid, s in _SESSIONS.items()
+            if now - s["updated_at"] > _TTL_SEC
+        ]
+        for sid in expired:
+            del _SESSIONS[sid]
+            _session_path(sid).unlink(missing_ok=True)
+            removed += 1
+
+        # 2) 数量上限兜底：按 updated_at 排序，淘汰最旧的
+        if len(_SESSIONS) > _MAX_SESSIONS:
+            ordered = sorted(_SESSIONS.values(), key=lambda s: s["updated_at"])
+            to_evict = len(_SESSIONS) - _MAX_SESSIONS
+            for s in ordered[:to_evict]:
+                sid = s["session_id"]
                 del _SESSIONS[sid]
                 _session_path(sid).unlink(missing_ok=True)
                 removed += 1
+
     return removed
 
 

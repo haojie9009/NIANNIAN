@@ -12,11 +12,7 @@ Thumbs.db
 backend/logs/*
 backend/data/sessions/*
 !backend/logs/.gitkeep
-backend/outputs/generated/*
-backend/outputs/uploads/*
-backend/outputs/final_cuts/*
-!backend/outputs/uploads/.gitkeep
-!backend/outputs/final_cuts/.gitkeep
+backend/outputs/*
 
 
 # 念念数据 — 仅同步 owner（主人）数据；其它用户数据本地保留，不上传
@@ -24,9 +20,11 @@ backend/outputs/final_cuts/*
 !/data/users/owner/
 /data/users.json
 data/cache/*
+/data/backup/*
 
 .claude/*
 .obsidian/*
 .vscode/*
 asset/*
-
+*.mp4
+*.wav

@@ -23,37 +23,38 @@ import base64
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+from pathlib import Path
 
 import requests as _requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from core.storage import DATA_DIR
+
+from logger import cache_logger as _cache_log, playback_logger as _pb_log
 import logging as _logging
 _llm_log = _logging.getLogger("niannian.llm")
+
+# Ctrl+C 中断 BGM 轮询用 — FastAPI shutdown 时由 main.py 设置
+bgm_shutdown = threading.Event()
 
 # Auto-find project root .env regardless of cwd
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
 # ── 302.ai 网关 ───────────────────────────────────────────────────────────────
-# ── Mock 模式（本地调试用，零 API 消费）────────────────────────────────────
-_MOCK_MODE = os.getenv("NIAN_MOCK_MODE", "").lower() in ("1", "true", "yes")
-if _MOCK_MODE:
-    _302_BASE_URL = os.getenv("NIAN_MOCK_URL", "http://localhost:8099/v1")
-    _302_VIDEO_I2V_URL = os.getenv("NIAN_MOCK_VIDEO_URL", "http://localhost:8099/klingai/m2v_26_image2video_5s")
-    _302_VIDEO_FETCH_URL = os.getenv("NIAN_MOCK_FETCH_URL", "http://localhost:8099/klingai/fetch")
-    _KLING_OFFICIAL_BASE = os.getenv("NIAN_MOCK_KLING_URL", "http://localhost:8099/v1")
-else:
-    _302_BASE_URL = "https://api.302.ai/v1"
-    _302_VIDEO_I2V_URL = "https://api.302.ai/klingai/m2v_26_image2video_5s"
-    _302_VIDEO_FETCH_URL = "https://api.302.ai/klingai/fetch"
-    _KLING_OFFICIAL_BASE = "https://api-singapore.klingai.com"
+_302_BASE_URL = "https://api.302.ai/v1"
+_302_VIDEO_I2V_URL = "https://api.302.ai/klingai/m2v_26_image2video_5s"
+_302_VIDEO_FETCH_URL = "https://api.302.ai/klingai/task/{task_id}/fetch"
+_KLING_OFFICIAL_BASE = "https://api-singapore.klingai.com"
 
-_llm_log.info("[llm] LLM 模式: %s, text_base=%s, video_base=%s",
-              "MOCK" if _MOCK_MODE else "REAL(302.ai)", _302_BASE_URL, _KLING_OFFICIAL_BASE)
+_llm_log.info("[llm] LLM 模式: REAL(302.ai), text_base=%s, video_base=%s",
+              _302_BASE_URL, _KLING_OFFICIAL_BASE)
 _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 
 # ── 各任务专属模型 ─────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ _LOCAL_MODEL    = os.getenv("LOCAL_LLM_MODEL",    "")
 # ── 录制/回放缓存 ─────────────────────────────────────────────────────────────
 # 先调真实 API 跑一遍，保存响应到 backend/data/cache/
 # 后续测试用 playback 模式从缓存读取，零 API 消费
-_CACHE_MODE = os.getenv("NIAN_CACHE_MODE", "").lower().strip()  # record | playback | ""
+_CACHE_MODE = os.getenv("_CACHE_MODE", "").lower().strip()  # record | playback | ""
 _cache_log = _logging.getLogger("niannian.cache")
 
 if _CACHE_MODE == "record":
@@ -128,12 +129,31 @@ class _ResponseCache:
         _cache_log.info("[cache] RECORD 保存: %s (%d chars) → %s", key, len(json.dumps(response_data)), os.path.basename(path))
 
     def load(self, endpoint: str, model: str = "", params: dict = None) -> Optional[dict]:
+        import inspect as _inspect
         key = self._cache_key(endpoint, model, params)
         path = os.path.join(self._CACHE_DIR, f"{key}.json")
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            _cache_log.info("[cache] PLAYBACK 命中: %s → %s", key, os.path.basename(path))
+            # 找到第一个不在本文件内的调用方
+            caller = "unknown"
+            _this_file = os.path.abspath(__file__)
+            for frame_info in _inspect.stack()[1:]:
+                if os.path.abspath(frame_info.filename) != _this_file:
+                    caller = f"{os.path.basename(frame_info.filename)}:{frame_info.lineno} {frame_info.function}()"
+                    break
+            _cache_log.info(
+                "[cache] PLAYBACK 命中 | 调用方: %s | 文件: %s | 时间: %s",
+                caller,
+                path,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            _pb_log.info(
+                "[cache] PLAYBACK 命中 | 调用方: %s | 文件: %s | 时间: %s",
+                caller,
+                os.path.basename(path),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
             return data["response"]
         return None
 
@@ -292,8 +312,8 @@ def call_skill(
                 result = json.loads(raw)
                 if _had_fallback:
                     _llm_log.info("[llm] %s 降级到 %s，skill=%s 调用成功", TEXT_MODEL, model_name, skill_name)
-                # ── Record: 保存响应 ──
-                if _CACHE_MODE == "record":
+                # ── Record: 保存响应（record 模式，或 playback miss 后补存）──
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
                                 {"skill": skill_name, "payload": user_payload})
                 return result
@@ -339,7 +359,7 @@ def call_memorial_chat(
                 )
                 result = response.choices[0].message.content or ""
                 # ── Record: 保存响应 ──
-                if _CACHE_MODE == "record":
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", {"reply": result}, model, {"messages": messages})
                 return result
             except Exception as exc:
@@ -349,6 +369,13 @@ def call_memorial_chat(
                 if attempt < 3:
                     time.sleep(1)
         return f"（念念暂时无法回应，请稍后再试。错误：{last_error or '未知'}）"
+
+    if _CACHE_MODE == "playback":
+        for _model_name, _ in _iter_model_clients():
+            cached = _cache.load("chat/completions", _model_name, {"messages": messages})
+            if cached is not None:
+                return cached.get("reply", "")
+        _pb_log.warning("[playback] 缓存未命中 | call_memorial_chat | messages: %s", json.dumps(messages, ensure_ascii=False, default=str)[:300])
 
     _had_fallback = False
     for model_name, client in _iter_model_clients():
@@ -363,7 +390,7 @@ def call_memorial_chat(
                 if _had_fallback:
                     _llm_log.info("[llm] %s 降级到 %s，memorial_chat 成功", TEXT_MODEL, model_name)
                 # ── Record: 保存响应 ──
-                if _CACHE_MODE == "record":
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", {"reply": response.choices[0].message.content or ""},
                                 model_name, {"messages": messages})
                 return response.choices[0].message.content or ""
@@ -401,7 +428,7 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
                 if _had_fallback:
                     _llm_log.info("[llm] %s 降级到 %s，freeform 成功", TEXT_MODEL, model_name)
                 result = response.choices[0].message.content or ""
-                if _CACHE_MODE == "record":
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", {"reply": result}, model_name,
                                 {"system": system_prompt, "user": user_content})
                 return result
@@ -447,7 +474,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
                 result = json.loads(raw)
                 if _had_fallback:
                     _llm_log.info("[llm] %s 降级到 %s，structured 成功", TEXT_MODEL, model_name)
-                if _CACHE_MODE == "record":
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
                                 {"system": system_prompt, "user": user_content})
                 return result
@@ -514,6 +541,238 @@ def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
             if attempt < 2:
                 time.sleep(1)
     return f"[AUDIO_PARSE_ERROR] {last_error or 'Unknown error'}"
+
+
+# ─── 语音合成（seed_tts via 302.ai）────────────────────────────────── 
+_SEED_TTS_URL = os.getenv("SEED_TTS_URL", "https://openspeech.bytedance.com/api/v3/tts/unidirectional")
+_SEED_APP_ID = os.getenv("SEED_TTS_APP_ID", "")
+_SEED_ACCESS_KEY = os.getenv("SEED_TTS_ACCESS_KEY", "")
+_SEED_RESOURCE_ID = os.getenv("SEED_TTS_RESOURCE_ID", "")
+_SEED_SPEAKER = os.getenv("SEED_TTS_SPEAKER", "zh_female_wenroumama_uranus_bigtts")
+_SEED_SAMPLE_RATE = 24000
+
+
+def seed_tts(text: str) -> Optional[bytes]:
+    """调用 Seed TTS 合成音频，返回 WAV 字节。
+
+    流式 JSON Lines 响应：每行 base64 音频数据，code=20000000 表示合成结束。
+    """
+    if not (_SEED_APP_ID and _SEED_ACCESS_KEY and _SEED_RESOURCE_ID):
+        _llm_log.warning("[tts] Seed TTS env vars not set")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {_302_API_KEY}",
+        "X-Api-App-Id": _SEED_APP_ID,
+        "X-Api-Access-Key": _SEED_ACCESS_KEY,
+        "X-Api-Resource-Id": _SEED_RESOURCE_ID,
+        "Content-Type": "application/json",
+        "Connection": "keep-alive",
+    }
+
+    payload = {
+        "user": {"uid": "niannian_pipeline"},
+        "req_params": {
+            "text": text,
+            "speaker": _SEED_SPEAKER,
+            "audio_params": {
+                "format": "wav",
+                "sample_rate": _SEED_SAMPLE_RATE,
+                "enable_timestamp": True,
+                "speech_rate": -20,
+            },
+            "additions": json.dumps({
+                "explicit_language": "zh",
+                "disable_markdown_filter": True,
+                "enable_timestamp": True,
+            }),
+        },
+    }
+
+    audio_data = bytearray()
+    try:
+        session = _requests.Session()
+        response = session.post(_SEED_TTS_URL, headers=headers, json=payload, stream=True, timeout=120)
+        if response.status_code != 200:
+            _llm_log.error("[tts] HTTP %d: %s", response.status_code, response.text[:200])
+            return None
+
+        for chunk in response.iter_lines(decode_unicode=True):
+            if not chunk:
+                continue
+            data = json.loads(chunk)
+            code = data.get("code", 0)
+            if code == 0 and "data" in data and data["data"]:
+                audio_data.extend(base64.b64decode(data["data"]))
+            elif code == 20000000:
+                if "usage" in data:
+                    _llm_log.info("[tts] usage: %s", data["usage"])
+                break
+            elif code > 0:
+                _llm_log.error("[tts] error %d: %s", code, data.get("message", ""))
+                return None
+
+        if not audio_data:
+            _llm_log.warning("[tts] no audio data returned")
+            return None
+
+        return bytes(audio_data)
+
+    except Exception as e:
+        _llm_log.exception("[tts] failed: %s", e)
+        return None
+
+
+# ─── BGM 生成（Suno via 302.ai）─────────────────────────────────────
+# 参考 mini-pipeline/run.py step3_5()
+
+_BASE_URL = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1")
+_BGM_STYLE_MAP = {
+    "warm_nostalgia": "warm, nostalgic, gentle, piano, strings, emotional",
+    "peaceful_serene": "peaceful, serene, acoustic guitar, soft, ambient",
+    "solemn_respect": "solemn, orchestral, dignified, slow, reverent",
+    "gentle_sorrow": "gentle, sorrow, soft piano, emotional, bittersweet",
+    "hopeful_gratitude": "uplifting, hopeful, piano, warm, bittersweet",
+}
+
+
+def _set_bgm_progress(sid: str, state: dict) -> None:
+    """把 BGM 生成进度写入 session，前端通过 /api/pipeline/status/ 可见。"""
+    if not sid:
+        return
+    try:
+        from .service_manager import session_store
+        s = session_store.require(sid)
+        s.setdefault("bgm_state", {}).update(state)
+        # 同时更新 pipeline_state 的 label，让 MV06 进度面板直接显示
+        try:
+            step = state.get("step", "bgm_polling")
+            label = state.get("label", "BGM 生成中…")
+            s.setdefault("pipeline_state", {}).setdefault("MV06", {})
+            mv06 = s["pipeline_state"]["MV06"]
+            mv06["bgm_step"] = step
+            mv06["bgm_label"] = label
+            mv06["label"] = label
+            session_store.update(sid)
+        except Exception:
+            pass  # pipeline_state 未初始化也不影响
+    except Exception:
+        pass  # session_store 未初始化时忽略
+
+
+def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, memorial, cinematic, instrumental",
+                      title: str = "追思", sid: str = "") -> Optional[bytes]:
+    """Suno 生成追思 BGM（纯音乐），返回 MP3 字节。
+
+    流程：提交 → 轮询 → 下载。超时 300s。
+    """
+    api_key = os.getenv("AI302_API_KEY", "")
+    if not api_key:
+        _llm_log.warning("[bgm] AI302_API_KEY not set")
+        return None
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    submit_url = f"https://api.302.ai/suno/submit/music"
+
+    body = {
+        "tags": tags,
+        "mv": "chirp-v4",
+        "title": title,
+        "make_instrumental": True,
+    }
+
+    try:
+        r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
+        if r.status_code != 200:
+            _llm_log.error("[bgm] submit HTTP %d: %s", r.status_code, r.text[:300])
+            return None
+        resp = r.json()
+        task_id = resp.get("data", "")
+        if not task_id:
+            _llm_log.error("[bgm] 未获得 task_id: %s", r.text[:200])
+            return None
+        _llm_log.info("[bgm] suno submit OK task_id=%s tags=%s", task_id, tags)
+    except Exception as e:
+        _llm_log.exception("[bgm] submit failed: %s", e)
+        return None
+    
+    max_wait, elapsed, interval = 300, 0, 15
+    fetch_url = f"https://api.302.ai/suno/fetch/{task_id}"
+    audio_url = None
+    while elapsed < max_wait:
+        if bgm_shutdown.wait(interval):
+            _llm_log.info("[bgm] 收到 shutdown 信号，停止轮询")
+            return None
+        elapsed += interval
+        try:
+            pr = _requests.get(fetch_url, headers={"Authorization": f"Bearer {api_key}"}, 
+                               timeout=20)
+            pd = pr.json()
+            items = pd.get("data", {}).get("data", [])
+            if isinstance(items, list):
+                for item in items:
+                    url = item.get("audio_url", "")
+                    dur = float(item.get("duration", "0"))
+                    if url and dur and float(dur) > 0:
+                        audio_url = url
+                        break
+                if audio_url:
+                    break
+
+            status = pd.get("data", {}).get("status", "")
+            if isinstance(pd.get("data"), dict):
+                status = pd["data"].get("status", "")
+            if status in ("failed", "FAILED"):
+                reason = pd.get("data", {}).get("fail_reason", "未知")
+                _llm_log.error("[bgm] suno failed: %s", reason)
+                return None
+
+        except (_requests.exceptions.ConnectionError, _requests.exceptions.SSLError) as e:
+            _llm_log.warning("[bgm] poll transient error: %s — 5s 后重试", e)
+            if bgm_shutdown.wait(5):
+                _llm_log.info("[bgm] 收到 shutdown 信号，停止轮询")
+                return None
+            elapsed += 5
+            try:
+                pr = _requests.get(fetch_url, headers=headers, timeout=20)
+                pd = pr.json()
+                items = pd.get("data", {}).get("data", [])
+                if isinstance(items, list):
+                    for item in items:
+                        url = item.get("audio_url", "")
+                        dur = item.get("metadata", {}).get("duration", 0)
+                        if url and dur and float(dur) > 0:
+                            audio_url = url
+                            break
+                    if audio_url:
+                        break
+                status = pd.get("data", {}).get("status", "")
+                if isinstance(pd.get("data"), dict):
+                    status = pd["data"].get("status", "")
+                if status in ("failed", "FAILED"):
+                    reason = pd.get("data", {}).get("fail_reason", "未知")
+                    _llm_log.error("[bgm] suno failed: %s", reason)
+                    return None
+            except Exception as e2:
+                _llm_log.warning("[bgm] poll retry exception: %s", e2)
+                continue
+
+        except Exception as e:
+            _llm_log.warning("[bgm] poll exception: %s", e)
+
+    if not audio_url:
+        _llm_log.error("[bgm] suno timeout or no audio_url after %ds", max_wait)
+        return None
+
+    # 下载
+    try:
+        r = _requests.get(audio_url, timeout=120)
+        r.raise_for_status()
+        _llm_log.info("[bgm] downloaded %d bytes from %s", len(r.content), audio_url)
+        return r.content
+    except Exception as e:
+        _llm_log.exception("[bgm] download failed: %s", e)
+        return None
 
 
 def build_scene_prompts(
@@ -716,7 +975,7 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
 
     b64_str, err = _parse_gemini_image_response(resp, "[image_ref]")
     # ── Record: 保存响应 ──
-    if _CACHE_MODE == "record" and b64_str:
+    if _CACHE_MODE in ("record", "playback") and b64_str:
         ref_hash = hashlib.sha256(reference_b64.encode()).hexdigest()[:8]
         _cache.save("chat/completions", {"b64": b64_str, "error": err}, IMAGE_REF_MODEL,
                     {"prompt": prompt, "ref_hash": ref_hash})
@@ -927,7 +1186,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
 
     b64_str, err = _parse_gemini_image_response(resp, "[image_noref]")
     # ── Record: 保存响应 ──
-    if _CACHE_MODE == "record" and b64_str:
+    if _CACHE_MODE in ("record", "playback") and b64_str:
         _cache.save("chat/completions", {"b64": b64_str, "error": err}, IMAGE_REF_MODEL,
                     {"prompt": prompt})
     return b64_str, err
@@ -944,7 +1203,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
 # ── 302.ai 备用视频接口（Kling 2.6，图生视频 5s）────────────────────────────────
 # 文档：https://doc.302.ai/386524568e0
 # 提交：POST https://api.302.ai/klingai/m2v_26_image2video_5s  (multipart/form-data)
-# 查询：GET  https://api.302.ai/klingai/fetch?task_id=xxx
+# 查询：GET  https://api.302.ai/klingai/task/{task_id}/fetch
 # 状态：5=排队中 / 10=处理中 / 50=失败退款 / 99=成功
 # 视频：data.works[0].resource
 
@@ -1016,9 +1275,10 @@ def _kling_jwt() -> str:
 def generate_video_302ai_i2v(
     prompt: str,
     image_b64_or_url: Optional[str] = None,   # base64 data URL 或公开 HTTPS URL
+    image_tail_b64_or_url: Optional[str] = None,  # 尾帧图（可选）
+    enable_audio: bool = False,
     negative_prompt: str = "",
     cfg: float = 0.5,
-    duration: int = 5,
     poll: bool = True,
     max_wait: int = 600,
     _task_id_only: Optional[str] = None,  # 只轮询已有 task_id，跳过提交
@@ -1026,8 +1286,8 @@ def generate_video_302ai_i2v(
     """
     通过 302.ai 调用 Kling 2.6 图生视频（5s）。
     接口文档：https://doc.302.ai/386524568e0
-    提交：POST https://api.302.ai/klingai/m2v_26_image2video_5s
-    查询：GET  https://api.302.ai/klingai/fetch?task_id=xxx
+    提交：POST https://api.302.ai/klingai/m2v_26_image2video_5s  (multipart/form-data)
+    查询：GET  https://api.302.ai/klingai/task/{task_id}/fetch
     状态码：5=排队 / 10=处理中 / 50=失败 / 99=成功
     返回：
       成功 → {"url": "https://...", "task_id": "...", "source": "302ai"}
@@ -1049,31 +1309,63 @@ def generate_video_302ai_i2v(
         poll = True
         max_wait = max(max_wait, 1)
     else:
+        # 校验必填参数
+        if not image_b64_or_url:
+            return {"error": "image_b64_or_url 为必填参数（首帧图）", "source": "302ai"}
+
         # 构建 multipart/form-data 请求体
         files: Dict[str, Any] = {}
         data: Dict[str, Any] = {
             "prompt": prompt,
-            "enable_audio": "false",
+            "enable_audio": enable_audio,
         }
+        if negative_prompt:
+            data["negative_prompt"] = negative_prompt
+        data["cfg"] = str(cfg)
 
-        if image_b64_or_url:
+        # ── 首帧图：API 要求 binary 格式，URL 需先下载为文件 ──
+        try:
             if image_b64_or_url.startswith("data:"):
-                try:
-                    header_part, b64_part = image_b64_or_url.split(",", 1)
+                header_part, b64_part = image_b64_or_url.split(",", 1)
+                mime = header_part.split(":")[1].split(";")[0]
+                ext = mime.split("/")[-1] if "/" in mime else "png"
+                img_bytes = base64.b64decode(b64_part)
+                files["input_image"] = (f"frame.{ext}", img_bytes, mime)
+            else:
+                # HTTPS URL → 下载为 bytes 后作为文件上传
+                _log302i.info("[302ai_i2v] 首帧为 URL，下载后上传...")
+                r_img = _requests.get(image_b64_or_url, timeout=30)
+                r_img.raise_for_status()
+                ext = image_b64_or_url.rsplit(".", 1)[-1].split("?")[0] or "png"
+                mime = f"image/{ext}" if ext in ("png", "jpg", "jpeg", "webp") else "image/png"
+                files["input_image"] = (f"frame.{ext}", r_img.content, mime)
+        except Exception as e:
+            return {"error": f"首帧图处理失败：{e}", "source": "302ai"}
+
+        # ── 尾帧图（可选）：同样要求 binary 格式 ──
+        if image_tail_b64_or_url:
+            try:
+                if image_tail_b64_or_url.startswith("data:"):
+                    header_part, b64_part = image_tail_b64_or_url.split(",", 1)
                     mime = header_part.split(":")[1].split(";")[0]
                     ext = mime.split("/")[-1] if "/" in mime else "png"
                     img_bytes = base64.b64decode(b64_part)
-                    files["input_image"] = (f"frame.{ext}", img_bytes, mime)
-                except Exception as e:
-                    return {"error": f"base64 图片解析失败：{e}", "source": "302ai"}
-            else:
-                data["input_image"] = image_b64_or_url
+                    files["tail_image"] = (f"tail.{ext}", img_bytes, mime)
+                else:
+                    _log302i.info("[302ai_i2v] 尾帧为 URL，下载后上传...")
+                    r_img = _requests.get(image_tail_b64_or_url, timeout=30)
+                    r_img.raise_for_status()
+                    ext = image_tail_b64_or_url.rsplit(".", 1)[-1].split("?")[0] or "png"
+                    mime = f"image/{ext}" if ext in ("png", "jpg", "jpeg", "webp") else "image/png"
+                    files["tail_image"] = (f"tail.{ext}", r_img.content, mime)
+            except Exception as e:
+                _log302i.warning("[302ai_i2v] 尾帧图处理失败，忽略 tail_image：%s", e)
 
         try:
             r = _requests.post(
                 _302_VIDEO_I2V_URL,
                 headers=headers,
-                files=files if files else None,
+                files=files,
                 data=data,
                 timeout=60,
             )
@@ -1100,13 +1392,10 @@ def generate_video_302ai_i2v(
     elapsed = 0
     interval = 10
     while elapsed < max_wait:
-        time.sleep(interval)
-        elapsed += interval
         try:
             pr = _requests.get(
-                _302_VIDEO_FETCH_URL,
+                _302_VIDEO_FETCH_URL.format(task_id=task_id),
                 headers=headers,
-                params={"task_id": task_id},
                 timeout=20,
             )
             pd = pr.json()
@@ -1114,9 +1403,12 @@ def generate_video_302ai_i2v(
 
             if cur_status == 99:
                 works = pd.get("data", {}).get("works", [])
-                video_url = works[0].get("resource", "") if works else ""
-                if video_url:
-                    return {"url": video_url, "task_id": task_id, "status": 99, "source": "302ai"}
+                if works:
+                    first_work = works[0]
+                    res_obj = first_work.get("resource", {})
+                    video_url = res_obj.get("resource", "") if isinstance(res_obj, dict) else (res_obj or "")
+                    if video_url:
+                        return {"url": video_url, "task_id": task_id, "status": 99, "source": "302ai"}
                 return {"error": "302.ai 任务成功但未返回视频 URL", "task_id": task_id, "source": "302ai"}
             elif cur_status == 50:
                 return {"error": "302.ai 任务失败（已自动退款）", "task_id": task_id, "source": "302ai"}
@@ -1124,7 +1416,15 @@ def generate_video_302ai_i2v(
         except Exception:
             pass
 
-    _llm_log.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
+        # 只在剩余时间足够时继续等
+        elapsed += interval
+        if elapsed < max_wait:
+            time.sleep(interval)
+
+    if max_wait > interval:
+        _llm_log.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
+    else:
+        _llm_log.debug("302.ai 单次查询仍在处理，task_id=%s", task_id)
     return {"task_id": task_id, "status": 10, "source": "302ai",
             "error": f"302.ai 等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
@@ -1185,12 +1485,10 @@ def generate_video_kling(
         result = generate_video_302ai_i2v(
             prompt=prompt,
             image_b64_or_url=image_url,
-            duration=duration,
-            poll=poll,
-            max_wait=max_wait,
+            poll=poll, max_wait=max_wait,
         )
         # ── Record: 保存响应 ──
-        if _CACHE_MODE == "record" and "url" in result:
+        if _CACHE_MODE in ("record","playback") and "url" in result:
             img_hash = ""
             if image_url:
                 img_hash = hashlib.sha256(image_url[:200].encode()).hexdigest()[:8]
@@ -1205,7 +1503,7 @@ def generate_video_kling(
         _log_v.warning(f"[video] JWT 生成失败，fallback 到 302.ai：{e}")
         return generate_video_302ai_i2v(
             prompt=prompt, image_b64_or_url=image_url,
-            duration=duration, poll=poll, max_wait=max_wait,
+            poll=poll, max_wait=max_wait,
         )
 
     headers = {
@@ -1227,7 +1525,7 @@ def generate_video_kling(
     }
 
     def _resolve_image(raw_url: str) -> Optional[str]:
-        """base64 data URL → 图床 HTTPS URL；HTTPS URL 直接返回；失败返回 None"""
+        """base64 data URL → 图床 HTTPS URL；HTTPS URL 直接返回；相对路径 → 读取本地文件上传图床；失败返回 None"""
         if raw_url.startswith("data:"):
             try:
                 header_part, b64_part = raw_url.split(",", 1)
@@ -1238,7 +1536,24 @@ def generate_video_kling(
             except Exception as _e:
                 _log_v.warning(f"[video] base64 解析失败：{_e}")
                 return None
-        return raw_url  # 已是 HTTPS URL
+        if raw_url.startswith(("http://", "https://")):
+            return raw_url  # 已是完整 URL
+        # 相对路径 → 解析为本地文件并上传图床
+        if raw_url.startswith("/"):
+            try:
+                # /api/outputs/... → DATA_DIR/outputs/...
+                rel = raw_url.replace("/api/outputs/", "", 1)
+                full_path = str(DATA_DIR / "outputs" / rel)
+                if os.path.isfile(full_path):
+                    ext = os.path.splitext(full_path)[1].lstrip(".") or "png"
+                    with open(full_path, "rb") as f:
+                        img_bytes = f.read()
+                    return _upload_image_to_public(img_bytes, ext)
+                else:
+                    _log_v.warning(f"[video] 本地文件不存在：{full_path}")
+            except Exception as _e:
+                _log_v.warning(f"[video] 相对路径解析失败：{_e}")
+        return None
 
     # 首帧图
     if image_url:
@@ -1304,8 +1619,6 @@ def generate_video_kling(
     elapsed   = 0
     interval  = 10
     while elapsed < max_wait:
-        time.sleep(interval)
-        elapsed += interval
         try:
             token = _kling_jwt()
             pr = _requests.get(
@@ -1321,12 +1634,11 @@ def generate_video_kling(
             task_status = task_data.get("task_status", "")
 
             if task_status == "succeed":
-                # 视频 URL：data.task_result.videos[0].url
                 videos = task_data.get("task_result", {}).get("videos", [])
                 video_url = videos[0].get("url", "") if videos else ""
                 if video_url:
                     result = {"url": video_url, "task_id": task_id, "source": "kling"}
-                    if _CACHE_MODE == "record":
+                    if _CACHE_MODE in ("record", "playback"):
                         _cache.save("video/generate", result, "kling-v3",
                                     {"prompt": prompt})
                     return result
@@ -1340,7 +1652,14 @@ def generate_video_kling(
         except Exception:
             pass
 
-    _llm_log.error("Kling 等待超时（%ds），task_id=%s", max_wait, task_id)
+        elapsed += interval
+        if elapsed < max_wait:
+            time.sleep(interval)
+
+    if max_wait > interval:
+        _llm_log.error("Kling 等待超时（%ds），task_id=%s", max_wait, task_id)
+    else:
+        _llm_log.debug("Kling 单次查询仍在处理，task_id=%s", task_id)
     return {"task_id": task_id, "status": "processing", "source": "kling",
             "error": f"等待超时（{max_wait}s），可手动轮询 task_id={task_id}"}
 
@@ -1387,7 +1706,7 @@ def call_storyboard(system_prompt: str, user_content: str) -> Dict[str, Any]:
                 result = json.loads(raw)
                 if _had_fallback:
                     _llm_log.info("[llm] %s 降级到 %s，storyboard 成功", STORYBOARD_MODEL, model_name)
-                if _CACHE_MODE == "record":
+                if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
                                 {"system": system_prompt, "user": user_content})
                 return result

@@ -213,6 +213,18 @@ async function genSceneVideo(idx) {
       image_url: sc._img_url,
     });
     if (res.error) throw new Error(res.message || '视频提交失败');
+
+    // ── Playback 模式：视频已缓存，直接完成 ──
+    if (res.cached && res.url) {
+      sc._vid_url     = res.url;
+      sc._vid_status  = 'ok';
+      sc._vid_poll    = null;
+      sc._vid_task_id = null;
+      toast(`分镜 ${idx + 1} 视频（缓存）已就绪`);
+      renderScenes();
+      return;
+    }
+
     taskId     = res.task_id;
     taskSource = res.source || '';
   } catch (e) {
@@ -224,6 +236,29 @@ async function genSceneVideo(idx) {
 
   sc._vid_task_id     = taskId;
   sc._vid_task_source = taskSource;
+
+  startSceneVideoPoll(idx, taskId, taskSource);
+}
+
+// 恢复指定分镜的视频轮询（页面刷新后使用已有的 task_id）
+function resumeSceneVideoPoll(idx) {
+  const sc = state.scenes[idx];
+  if (!sc || !sc._video_task_id) return;
+  if (sc._vid_url) return; // 已有视频，不需要轮询
+
+  sc._vid_status = 'run';
+  sc._vid_task_id = sc._video_task_id;
+  sc._vid_task_source = sc._video_task_source || '';
+  startSceneVideoPoll(idx, sc._video_task_id, sc._vid_task_source);
+}
+
+// 核心轮询逻辑（genSceneVideo 和 resumeSceneVideoPoll 共用）
+function startSceneVideoPoll(idx, taskId, taskSource) {
+  const sc = state.scenes[idx];
+  if (sc._vid_poll) {
+    clearInterval(sc._vid_poll);
+    sc._vid_poll = null;
+  }
 
   const MAX_POLLS = 120;
   let   pollCount = 0;
@@ -269,29 +304,143 @@ async function genSceneVideo(idx) {
 }
 
 // ───── 最终合成 MV06 ─────
+let mv06_poll = null;
+
+// MV06 子步骤定义（顺序、显示名、进度百分比）
+const MV06_STEPS = [
+  { key: 'submitted',       label: '任务已提交',             pct: 0 },
+  { key: 'approving',       label: '准备中…',                pct: 5 },
+  { key: 'tts_running',     label: 'TTS语音合成中…',         pct: 10 },
+  { key: 'tts_done',        label: '已完成TTS语音合成',       pct: 25 },
+  { key: 'bgm_running',     label: 'BGM背景音乐匹配中…',      pct: 30 },
+  { key: 'bgm_done',        label: '已完成BGM背景音乐匹配',   pct: 45 },
+  { key: 'llm_running',     label: 'LLM生成影像脚本中…',      pct: 50 },
+  { key: 'llm_done',        label: '已完成LLM影像脚本生成',   pct: 70 },
+  { key: 'video_running',   label: '视频合成中…',             pct: 75 },
+  { key: 'video_done',      label: '视频合成完成',            pct: 95 },
+  { key: 'done',            label: '全部完成',               pct: 100 },
+];
+
+function renderMV06Steps(currentKey) {
+  const container = $('mv06ProgressSteps');
+  if (!container) return;
+  const ci = MV06_STEPS.findIndex(s => s.key === currentKey);
+  let html = '<div style="display:flex;flex-direction:column;gap:6px;">';
+  MV06_STEPS.forEach((s, i) => {
+    if (s.key === 'done') return; // don't show "done" in the list
+    let icon = '○', color = 'var(--muted-l)';
+    if (i < ci) { icon = '✓'; color = 'var(--green)'; }
+    else if (i === ci) { icon = '◉'; color = 'var(--gold)'; }
+    html += `<div style="font-size:.84rem;color:${color};line-height:1.6;">${icon} ${s.label}</div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function updateMV06Progress(stepKey) {
+  const info = MV06_STEPS.find(s => s.key === stepKey);
+  const pct = info ? info.pct : 0;
+  const fill = $('mv06ProgressFill');
+  const label = $('mv06ProgressLabel');
+  if (fill) fill.style.width = pct + '%';
+  if (label && info) label.textContent = info.label;
+}
+
 async function finalCut() {
+  // 取消已有的轮询
+  if (mv06_poll) { clearInterval(mv06_poll); mv06_poll = null; }
+
   const btn = $('btnFinalCut');
   const old = btn.textContent;
   btn.disabled = true; btn.textContent = '合成中...';
   setPill('MV06', 'active');
+
+  // 显示进度面板
+  hide('phaseFinal');
+  hide('phaseError');
+  show('phaseMV06Progress');
+  renderMV06Steps('submitted');
+  updateMV06Progress('submitted');
+
   try {
     const res = await apiPost(`/pipeline/run/MV06/${state.sid}`, {});
-    if (res.error) throw new Error(res.message || 'MV06 失败');
-    setPill('MV06', 'done');
-    const url = (res.result && (res.result.final_video_url || res.result.url)) || '';
-    $('finalOutput').innerHTML = url
-      ? `<video controls style="width:100%;border-radius:10px;" src="${esc(url)}"></video>
-         <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a></div>`
-      : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(res.result, null, 2))}</pre>`;
-    show('phaseFinal');
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    if (res.error) throw new Error(res.message || 'MV06 提交失败');
   } catch (e) {
     setPill('MV06', '');
+    hide('phaseMV06Progress');
+    $('finalOutput').innerHTML = '';
     $('errorOutput').textContent = e.message || String(e);
     show('phaseError');
-  } finally {
     btn.disabled = false; btn.textContent = old;
+    return;
   }
+
+  // 提交成功，开始轮询状态
+  const MAX_POLLS = 180;  // 180 × 10s = 30 min
+  let pollCount = 0;
+  let lastStep = '';
+
+  mv06_poll = setInterval(async () => {
+    pollCount++;
+    if (pollCount > MAX_POLLS) {
+      clearInterval(mv06_poll); mv06_poll = null;
+      setPill('MV06', '');
+      hide('phaseMV06Progress');
+      $('finalOutput').innerHTML = '';
+      $('errorOutput').textContent = '合成超时（30 分钟未完成），请刷新后重试';
+      show('phaseError');
+      btn.disabled = false; btn.textContent = old;
+      return;
+    }
+
+    try {
+      const r = await apiGet(`/pipeline/status/${state.sid}`);
+      const mv06 = r.pipeline_state && r.pipeline_state['MV06'];
+      if (!mv06 || mv06.status === 'running') {
+        // 还在进行中，更新进度
+        const stepKey = mv06 && mv06.step ? mv06.step : 'running';
+        if (stepKey !== lastStep) {
+          lastStep = stepKey;
+          renderMV06Steps(stepKey);
+          updateMV06Progress(stepKey);
+        } else {
+          // 步骤没变，只更新提示文字
+          const label = mv06 && mv06.label ? mv06.label : '合成中…';
+          $('mv06ProgressLabel').textContent = label + `（第 ${Math.ceil(pollCount * 10 / 60)} 分钟）`;
+        }
+        return;
+      }
+
+      clearInterval(mv06_poll); mv06_poll = null;
+
+      if (mv06.status === 'done') {
+        setPill('MV06', 'done');
+        hide('phaseMV06Progress');
+        // 最后更新一次进度到 100%
+        renderMV06Steps('done');
+        updateMV06Progress('done');
+
+        const url = r.video_url || '';
+        $('finalOutput').innerHTML = url
+          ? `<video controls style="width:100%;border-radius:10px;" src="${esc(url)}"></video>
+             <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a></div>`
+          : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(r, null, 2))}</pre>`;
+        show('phaseFinal');
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      } else {
+        // error
+        setPill('MV06', '');
+        hide('phaseMV06Progress');
+        $('finalOutput').innerHTML = '';
+        const err = r.error_detail || mv06.error || '未知错误';
+        $('errorOutput').textContent = err;
+        show('phaseError');
+      }
+      btn.disabled = false; btn.textContent = old;
+    } catch (e) {
+      console.warn('[mv06 poll] 轮询出错：', e.message);
+    }
+  }, 10_000);
 }
 
 // ───── 启动 ─────
@@ -317,6 +466,12 @@ async function bootstrap() {
       hide('phaseGenScenes');
       show('phaseScenes');
       renderScenes();
+      // 恢复未完成视频的分镜轮询
+      state.scenes.forEach((sc, i) => {
+        if (sc._video_task_id && !sc._vid_url) {
+          resumeSceneVideoPoll(i);
+        }
+      });
     }
   } catch { /* 没生成过则保持初始 UI */ }
 }
@@ -325,4 +480,9 @@ document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   $('btnGenScenes').onclick = genScenes;
   $('btnFinalCut').onclick  = finalCut;
+});
+
+// 页面关闭时清理轮询
+window.addEventListener('beforeunload', () => {
+  if (mv06_poll) clearInterval(mv06_poll);
 });

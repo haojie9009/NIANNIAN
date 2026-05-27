@@ -18,27 +18,50 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin
+from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, audio
 from core import oss_sync, storage as _storage  # noqa: F401
 from logger import app_logger, api_logger
 from services import session_store
-from services.llm_client import _MOCK_MODE, TEXT_MODEL, TEXT_FALLBACK_MODEL
+from services.llm_client import TEXT_MODEL, TEXT_FALLBACK_MODEL, bgm_shutdown
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     n = session_store.load_all()
     app_logger.info("session_store: loaded %d sessions from disk", n)
-    if _MOCK_MODE:
-        app_logger.info("[WARN] LLM 运行在 MOCK 模式，所有请求使用本地模拟")
-    else:
-        app_logger.info("LLM 模式: REAL(302.ai), 文本模型=%s/%s", TEXT_MODEL, TEXT_FALLBACK_MODEL)
+    app_logger.info("LLM 模式: REAL(302.ai), 文本模型=%s/%s", TEXT_MODEL, TEXT_FALLBACK_MODEL)
     # 缓存模式日志
     from services.llm_client import _CACHE_MODE, _cache
     if _CACHE_MODE:
         n_cached = len(_cache.list_cache())
         app_logger.info("LLM 缓存模式: %s (%d 条缓存)", _CACHE_MODE.upper(), n_cached)
-    yield
+
+    # 后台定时 gc（每 1 小时清理过期 session + 数量上限淘汰）
+    async def _gc_loop():
+        import asyncio
+        while True:
+            try:
+                await asyncio.sleep(3600)
+                n = session_store.gc()
+                if n:
+                    app_logger.info("[session_store] gc: 清理了 %d 个过期/超限 session", n)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                app_logger.exception("[session_store] gc 异常: %s", e)
+
+    import asyncio
+    gc_task = asyncio.create_task(_gc_loop())
+    # 启动时也跑一次 gc
+    removed = session_store.gc()
+    if removed:
+        app_logger.info("[session_store] startup gc: 清理了 %d 个 session", removed)
+
+    try:
+        yield
+    finally:
+        gc_task.cancel()
+        bgm_shutdown.set()
 
 app = FastAPI(
     title="念念 NianNian Memorial API",
@@ -168,12 +191,17 @@ app.include_router(auth.router,     prefix="/api")
 app.include_router(memorials.router, prefix="/api")
 app.include_router(uploads.router,  prefix="/api")
 app.include_router(voice.router,    prefix="/api")
+app.include_router(audio.router,    prefix="/api")
 app.include_router(admin.router,    prefix="/api")
 
 # 生成资源静态托管（图片/视频本地持久化）
 _GENERATED = _BACKEND.parent / "backend" / "outputs" / "generated"
 if _GENERATED.exists():
     app.mount("/api/outputs/generated", StaticFiles(directory=str(_GENERATED)), name="generated")
+
+_FINAL = _BACKEND.parent / "backend" / "outputs" / "final_cuts"
+_FINAL.mkdir(parents=True, exist_ok=True)
+app.mount("/api/outputs/final_cuts", StaticFiles(directory=str(_FINAL)), name="final_cuts")
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"
@@ -229,7 +257,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "service": "niannian-backend",
-        "llm_mode": "mock" if _MOCK_MODE else "real(302.ai)",
+        "llm_mode": "real(302.ai)",
         "text_models": [TEXT_MODEL, TEXT_FALLBACK_MODEL],
     }
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import os, time, zipfile, shutil
 
 from core import security, storage
+from services import session_store, gate_manager
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -111,3 +112,66 @@ def restore_snapshot(name: str, user=Depends(_require_owner)):
     with zipfile.ZipFile(snap, "r") as z:
         z.extractall(str(d))
     return {"restored_from": name, "emergency_backup": emerg.name}
+
+
+# ---- Session 调试接口 ----
+
+@router.get("/sessions")
+def list_sessions(user=Depends(_require_owner)):
+    """列出所有活跃 session 的摘要。"""
+    ids = session_store.list_ids()
+    result = []
+    for sid in ids:
+        s = session_store.get(sid)
+        if s is None:
+            continue
+        result.append({
+            "session_id": sid,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.get("created_at", 0))),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.get("updated_at", 0))),
+            "form_name": s.get("form_data", {}).get("name", ""),
+            "chat_history_len": len(s.get("chat_history", [])),
+            "mv_outputs": list(s.get("mv_outputs", {}).keys()),
+            "pipeline_state": {k: v.get("status") for k, v in s.get("pipeline_state", {}).items()},
+            "gate_status": {k: v for k, v in s.get("gate", {}).items() if k != "lock"},
+        })
+    return {"count": len(result), "sessions": result}
+
+
+@router.get("/sessions/{sid}")
+def get_session_detail(sid: str, user=Depends(_require_owner)):
+    """获取单个 session 的完整内容。"""
+    s = session_store.get(sid)
+    if s is None:
+        raise HTTPException(404, f"session {sid} not found")
+    return s
+
+
+@router.post("/sessions/{sid}/unlock-gate")
+def unlock_gate(sid: str, user=Depends(_require_owner)):
+    """解锁指定 session 的所有 gate，将所有步骤设为 approved。"""
+    s = session_store.require(sid)
+    for step in gate_manager.GATE_ORDER:
+        s["gate"]["gate_status"][step] = "approved"
+        s["pipeline_state"][step] = {"status": "approved", "duration_sec": 0, "error": None}
+    s["updated_at"] = time.time()
+    session_store._save(sid)
+    return {"session_id": sid, "gates": {step: "approved" for step in gate_manager.GATE_ORDER}}
+
+
+@router.delete("/sessions/{sid}")
+def delete_session(sid: str, user=Depends(_require_owner)):
+    """从内存和磁盘删除一个 session。"""
+    s = session_store.get(sid)
+    if s is None:
+        # 内存中不存在，检查磁盘文件
+        disk_data = session_store._load_from_disk(sid)
+        if disk_data is None:
+            raise HTTPException(404, f"session {sid} not found")
+        # 磁盘上有文件，直接删除
+        session_store._session_path(sid).unlink(missing_ok=True)
+        return {"deleted": sid}
+    with session_store._LOCK:
+        del session_store._SESSIONS[sid]
+        session_store._session_path(sid).unlink(missing_ok=True)
+    return {"deleted": sid}

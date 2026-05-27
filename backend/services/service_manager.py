@@ -1,21 +1,26 @@
 # backend/services/service_manager.py
 # 统一出口 —— routers 只允许从这里 import。
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import gate_manager, session_store  # noqa: F401
 
 from .llm_client import (
+    _BGM_STYLE_MAP,
     PRIMARY_CLIENT,
     TEXT_MODEL,
     TEXT_FALLBACK_MODEL,
     DIALOGUE_MODEL,
+    _CACHE_MODE,
     call_skill,
     call_memorial_chat,
     call_freeform,
     call_structured,
     describe_image,
     transcribe_audio,
+    seed_tts,
+    generate_bgm_suno,
     build_scene_prompts,
     generate_image_302,
     generate_video_302ai_i2v,
@@ -33,8 +38,9 @@ FINAL_DIR   = OUTPUTS_DIR / "final_cuts"
 GENERATED_DIR = OUTPUTS_DIR / "generated"
 GEN_IMAGES_DIR = GENERATED_DIR / "images"
 GEN_VIDEOS_DIR = GENERATED_DIR / "videos"
+AUDIO_OUTPUT_DIR = GENERATED_DIR / "audio"
 
-for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR, GENERATED_DIR, GEN_IMAGES_DIR, GEN_VIDEOS_DIR):
+for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR, GENERATED_DIR, GEN_IMAGES_DIR, GEN_VIDEOS_DIR, AUDIO_OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
@@ -116,11 +122,13 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
             s["pipeline_state"][mv_id] = {
                 "status": "error", "duration_sec": elapsed, "error": result.get("message", "unknown")
             }
+            session_store.update(sid)  # 写盘持久化
             return {"error": True, "step": mv_id, "message": result.get("message")}
 
         s["mv_outputs"][mv_id] = result
         gate_manager.approve(gate, mv_id)
         s["pipeline_state"][mv_id] = {"status": "approved", "duration_sec": elapsed, "error": None}
+        session_store.update(sid)  # 写盘持久化
 
         # 持久化到 outputs/
         try:
@@ -136,6 +144,7 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
         elapsed = round(_t.time() - t0, 2)
         gate_manager.reject(gate, mv_id, {})
         s["pipeline_state"][mv_id] = {"status": "error", "duration_sec": elapsed, "error": str(exc)}
+        session_store.update(sid)  # 写盘持久化
         return {"error": True, "step": mv_id, "message": str(exc)}
 
 
@@ -673,6 +682,24 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
+    # ── Playback 模式：命中本地图片缓存则跳过 API ──
+    if _CACHE_MODE == "playback":
+        cached_url = scene.get("_image_url", "")
+        # 内存中没有 _image_url → 按约定文件名回退检查磁盘
+        if not cached_url:
+            fallback_name = f"{sid}_scene{scene_idx}.png"
+            fallback_path = GEN_IMAGES_DIR / fallback_name
+            if fallback_path.is_file():
+                cached_url = f"/api/outputs/generated/images/{fallback_name}"
+        if cached_url:
+            # 将 URL 路径映射为磁盘文件
+            if cached_url.startswith("/api/outputs/generated/images/"):
+                cached_path = GEN_IMAGES_DIR / Path(cached_url).name
+            else:
+                cached_path = Path(cached_url)
+            if cached_path.is_file():
+                return {"url": cached_url, "cached": True}
+
     # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
     try:
         prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None)
@@ -691,6 +718,7 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     local_url = _save_generated_image(b64, sid, scene_idx)
     scene["_image_url"] = local_url
     scene["_image_prompt"] = image_prompt
+    session_store.update(sid)
     return {"url": local_url}
 
 
@@ -704,9 +732,49 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
+    # ── Playback 模式：命中本地视频缓存则跳过 API ──
+    if _CACHE_MODE == "playback":
+        cached_url = scene.get("_video_url", "")
+        svc_logger.debug("[video playback] cached_url=%s", cached_url)
+        # 内存中没有 _video_url → 按约定文件名回退检查磁盘
+        if not cached_url:
+            fallback_name = f"{sid}_scene{scene_idx}.mp4"
+            fallback_path = GEN_VIDEOS_DIR / fallback_name
+            if fallback_path.is_file():
+                cached_url = f"/api/outputs/generated/videos/{fallback_name}"
+        if cached_url:
+            if cached_url.startswith("/api/outputs/generated/videos/"):
+                cached_path = GEN_VIDEOS_DIR / Path(cached_url).name
+            else:
+                cached_path = Path(cached_url)
+            if cached_path.is_file():
+                return {"url": cached_url, "cached": True, "status": "done"}
+
     image_url = image_url or scene.get("_image_url", "")
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
+
+    # 相对路径（/api/outputs/generated/images/xxx.png）→ 上传图床获取公网 URL
+    if image_url.startswith("/api/outputs/generated/images/"):
+        import base64 as _b64
+        import requests as _req
+        filename = image_url.rsplit("/", 1)[-1]
+        local_path = GEN_IMAGES_DIR / filename
+        if not local_path.exists():
+            return {"error": True, "message": f"首帧图文件不存在：{local_path}"}
+        b64 = _b64.b64encode(local_path.read_bytes()).decode()
+        try:
+            r = _req.post(
+                "https://freeimage.host/api/1/upload",
+                data={"key": "6d207e02198a847aa98d0a2a901485a5", "source": b64, "format": "json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            rj = r.json()
+            image_url = rj["image"]["url"]
+            svc_logger.info("[video] 首帧图已上传图床: %s", image_url)
+        except Exception as e:
+            return {"error": True, "message": f"首帧图上传图床失败：{e}"}
 
     # 视频 prompt
     try:
@@ -737,8 +805,31 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     scene["_video_task_id"]     = task_id
     scene["_video_task_source"] = source
     scene["_video_status"]      = "pending"
+    session_store.update(sid)
     svc_logger.info("[video] 提交成功 task_id=%s source=%s sid=%s scene=%d", task_id, source, sid, scene_idx)
     return {"task_id": task_id, "source": source, "status": "pending"}
+
+
+def get_cached_scene_video(sid: str, scene_idx: int) -> Optional[str]:
+    """检查本地是否有已缓存的视频文件，有则返回 URL，否则返回 None。"""
+    try:
+        s = session_store.require(sid)
+        mv04 = s["mv_outputs"].get("MV04")
+        scenes = _get_scenes_from_mv04(mv04)
+        if 0 <= scene_idx < len(scenes):
+            cached_url = scenes[scene_idx].get("_video_url", "")
+            if cached_url:
+                cached_path = GEN_VIDEOS_DIR / Path(cached_url).name
+                if cached_path.is_file():
+                    return cached_url
+    except Exception:
+        pass
+    # 按约定文件名回退
+    fallback_name = f"{sid}_scene{scene_idx}.mp4"
+    fallback_path = GEN_VIDEOS_DIR / fallback_name
+    if fallback_path.is_file():
+        return f"/api/outputs/generated/videos/{fallback_name}"
+    return None
 
 
 def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dict[str, Any]:
@@ -783,8 +874,649 @@ def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dic
         if 0 <= scene_idx < len(scenes):
             scenes[scene_idx]["_video_url"]    = final_url
             scenes[scene_idx]["_video_status"] = "done"
+        session_store.update(sid)
     except Exception:
         pass
 
     svc_logger.info("[video] 完成 task_id=%s url=%s", task_id, final_url)
     return {"status": "done", "url": final_url}
+
+
+# ── TTS 合成 ──────────────────────────────────────────────────────────
+import hashlib as _hashlib
+import io as _io
+import uuid as _uuid
+import wave as _wave
+
+
+def _get_wav_duration(data: bytes) -> float:
+    """从 WAV 数据读取时长（秒）。"""
+    try:
+        with _wave.open(_io.BytesIO(data), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0 and frames * 2 < len(data) + 1000:
+                return frames / rate
+            # ChunkSize=-1 降级：用文件大小减 header 估算
+            pcm = data[44:] if data[:4] == b"RIFF" else data
+            return len(pcm) / (rate * 2) if rate > 0 else 0
+    except Exception:
+        # mp3 降级
+        try:
+            from mutagen.mp3 import MP3
+            p = _io.BytesIO(data)
+            audio = MP3(p)
+            return audio.info.length if audio.info else 0
+        except Exception:
+            return 0
+
+
+def _tts_cache_path(text: str) -> Optional[Path]:
+    """根据文本 hash 查找已缓存的 TTS 音频文件。"""
+    text_hash = _hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+    pattern = f"tts_cache_{text_hash}_*.wav"
+    hits = list(AUDIO_OUTPUT_DIR.glob(pattern))
+    return hits[0] if hits else None
+
+
+def synthesize_tts_text(text: str, sid: str, scene_idx: int = 0) -> Optional[tuple]:
+    """将纯文本合成为 WAV，带缓存：相同文本复用已生成的文件。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    # 1) 查缓存
+    cached = _tts_cache_path(text)
+    if cached and cached.exists():
+        audio_bytes = cached.read_bytes()
+        url = f"/api/outputs/generated/audio/{cached.name}"
+        duration = _get_wav_duration(audio_bytes)
+        svc_logger.info("[tts] cache hit sid=%s scene=%d file=%s", sid, scene_idx, cached.name)
+        return url, duration
+
+    # 2) 生成
+    audio_bytes = seed_tts(text)
+    if not audio_bytes:
+        svc_logger.warning("[tts] synthesis returned no audio for text: %s", text[:80])
+        return None
+
+    text_hash = _hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+    filename = f"tts_cache_{text_hash}_{_uuid.uuid4().hex[:6]}.wav"
+    path = AUDIO_OUTPUT_DIR / filename
+    path.write_bytes(audio_bytes)
+    url = f"/api/outputs/generated/audio/{filename}"
+    duration = _get_wav_duration(audio_bytes)
+    svc_logger.info("[tts] sid=%s scene=%d file=%s size=%d dur=%.1fs", sid, scene_idx, filename, len(audio_bytes), duration)
+    return url, duration
+
+
+def generate_tts_segments(sid: str, scenes: list) -> list:
+    """从分镜中提取旁白文本并逐段合成 TTS。
+    同时更新 scene 对象上的 _tts_audio_url / _tts_duration_sec。
+    返回 tts_segments 列表，用于存入 session['audio']['tts_segments']。
+    """
+    tts_segments: list = []
+    for i, sc in enumerate(scenes):
+        narr = (sc.get("voice_script")  or "").strip()
+        if narr:
+            result = synthesize_tts_text(narr, sid, i)
+            if result:
+                url, duration = result
+                sc["_tts_audio_url"] = url
+                sc["_tts_duration_sec"] = round(duration, 1)
+                tts_segments.append({"scene_idx": i, "audio_url": url, "duration_sec": round(duration, 1)})
+    return tts_segments
+
+
+def generate_bgm(sid: str) -> dict:
+    """为 session 生成 BGM（分析情感 → 生成/缓存 → 存入 session）。
+    返回 bgm_result dict（含 emotion, bgm_url, duration_sec)。
+    """
+    bgm_result = match_bgm(sid)
+    s = session_store.require(sid)
+    s.setdefault("audio", {})
+    s["audio"]["bgm"] = bgm_result
+    session_store.update(sid)
+    return bgm_result
+
+
+# ── 视频拼接（moviepy）────────────────────────────────────────────────
+# 参考 mini-pipeline/run.py step4()
+
+_WINDOWS_CHINESE_FONTS = [
+    "C:/Windows/Fonts/msyh.ttc",       # 微软雅黑
+    "C:/Windows/Fonts/simhei.ttf",     # 黑体
+    "C:/Windows/Fonts/simsun.ttc",     # 宋体
+    "C:/Windows/Fonts/simkai.ttf",     # 楷体
+]
+
+def _find_chinese_font() -> Optional[str]:
+    for p in _WINDOWS_CHINESE_FONTS:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _url_to_local_path(url: str) -> Optional[Path]:
+    """将 /api/outputs/generated/audio/xxx.wav → 本地文件路径。"""
+    if not url or not url.startswith("/api/outputs/generated/"):
+        return None
+    # /api/outputs/generated/... → backend/outputs/generated/...
+    rel = url.replace("/api/outputs/generated/", "backend/outputs/generated/", 1)
+    return ROOT_DIR / rel
+
+
+def _make_ken_burns_clip(img_path: str, duration: float) -> "VideoClip":
+    """将静态图片转为 Ken Burns 缓慢缩放动画视频片段。"""
+    from PIL import Image as PIL_Image
+    from moviepy import ImageClip
+    import numpy as _np
+
+    img_clip = ImageClip(img_path).with_duration(duration).with_fps(24)
+    w, h = img_clip.size
+
+    def zoom_effect(get_frame, t):
+        ratio = 1 + 0.15 * (t / duration)
+        new_w, new_h = int(w * ratio), int(h * ratio)
+        frame = PIL_Image.fromarray(get_frame(t))
+        frame = frame.resize((new_w, new_h), PIL_Image.LANCZOS)
+        left = (new_w - w) // 2
+        top = (new_h - h) // 2
+        frame = frame.crop((left, top, left + w, top + h))
+        return _np.array(frame)
+
+    return img_clip.transform(zoom_effect, apply_to=[])
+
+
+def _build_subtitle_clip(scenes: list, scene_durations: list, scene_starts: list, video_size: tuple):
+    """为所有分镜生成字幕轨道（底部居中，白色+黑色描边）。"""
+    from moviepy import TextClip, CompositeVideoClip, ColorClip
+
+    font = _find_chinese_font()
+    if font is None:
+        svc_logger.warning("[subtitle] 未找到中文字体，字幕可能显示异常")
+        font = "Arial"
+
+    subtitle_clips = []
+    total_dur = 0
+
+    for scene, dur, start in zip(scenes, scene_durations, scene_starts):
+        text = (scene.get("voice_script") or scene.get("narration") or scene.get("subtitle") or "").strip()
+        end = start + dur
+        if end > total_dur:
+            total_dur = end
+        if not text or dur <= 0:
+            continue
+
+        try:
+            txt_clip = (
+                TextClip(
+                    text=text,
+                    font_size=36,
+                    color="white",
+                    font=font,
+                    stroke_color="black",
+                    stroke_width=2,
+                    method="caption",
+                    text_align="center",
+                    size=(int(video_size[0] * 0.85), None),
+                )
+                .with_start(start)
+                .with_duration(dur)
+                .with_position(("center", video_size[1] - 120))
+            )
+            subtitle_clips.append(txt_clip)
+        except Exception as e:
+            svc_logger.warning("[subtitle] 跳过 scene: %s", e)
+
+    if not subtitle_clips:
+        return None
+
+    bg = ColorClip(size=video_size, color=(0, 0, 0, 0), duration=total_dur)
+    return CompositeVideoClip([bg] + subtitle_clips, size=video_size)
+
+
+def _extend_video(clip, target_duration):
+    """用 ffmpeg minterpolate 智能补帧延长视频到目标时长"""
+    import subprocess
+    from moviepy import VideoFileClip
+    from moviepy.config import FFMPEG_BINARY
+
+    speed = clip.duration / target_duration
+    if speed >= 0.95:
+        return clip  # 差异很小，直接使用
+
+    src = clip.filename
+    base = Path(src).stem
+    parent = Path(src).parent
+    out_file = parent / f"_interp_{base}.mp4"
+
+    subprocess.run(
+        [
+            FFMPEG_BINARY, "-y", "-i", src,
+            "-filter_complex",
+            f"setpts=PTS/{speed},minterpolate='mi_mode=blend:fps=24'",
+            "-c:v", "libx264", "-an",
+            str(out_file),
+        ],
+        capture_output=True,
+    )
+
+    new_clip = VideoFileClip(str(out_file))
+    if new_clip.duration > target_duration + 0.05:
+        new_clip = new_clip.subclipped(0, target_duration)
+    return new_clip
+
+
+def assemble_final_video(s: dict) -> Dict[str, Any]:
+    """拼接最终视频：视频/图片 + 旁白 + BGM + 字幕。
+    返回 {"ok": bool, "video_url": str, "duration_sec": float, "error": str}
+    """
+    from moviepy import (
+        VideoFileClip, AudioFileClip, CompositeAudioClip, CompositeVideoClip,
+        concatenate_videoclips,
+    )
+
+    sid = s["session_id"]
+    mv04 = s["mv_outputs"].get("MV04")
+    scenes = _get_scenes_from_mv04(mv04)
+    audio_info = s.get("audio", {})
+    tts_segments = audio_info.get("tts_segments", [])
+    bgm_info = audio_info.get("bgm", {})
+
+    # ── 1. 筛选可用分镜（视频 or 图片）──
+    usable = []
+    for i, sc in enumerate(scenes):
+        entry = dict(sc)  # copy
+        entry["_idx"] = i
+
+
+        # 优先本地视频文件
+        vid_found = False
+        if sc.get("_video_url"):
+            p = _url_to_local_path(sc["_video_url"])
+            if p and p.exists():
+                entry["video_path"] = str(p)
+                entry["video_mode"] = "video"
+                vid_found = True
+
+        # 其次本地图片文件
+        if not vid_found:
+            img_url = sc.get("_img_url") or sc.get("_image_url")
+            if img_url:
+                p = _url_to_local_path(img_url)
+                if p and p.exists():
+                    entry["image_path"] = str(p)
+                    entry["video_mode"] = "ken_burns"
+                    usable.append(entry)
+                    continue
+
+        if vid_found:
+            usable.append(entry)
+
+    if not usable:
+        return {"ok": False, "error": "没有可用的分镜（图片/视频均未找到）"}
+
+    # 构建 audio_path 映射（scene_idx → local path + duration）
+    audio_map = {}
+    for t in tts_segments:
+        idx = t.get("scene_idx")
+        p = _url_to_local_path(t.get("audio_url", ""))
+        if p and p.exists():
+            audio_map[idx] = {"path": str(p), "duration": t.get("duration_sec", 0)}
+
+    bgm_path = _url_to_local_path(bgm_info.get("bgm_url", ""))
+    if bgm_path and not bgm_path.exists():
+        bgm_path = None
+
+    svc_logger.info("[assemble] sid=%s usable_scenes=%d audio_tracks=%d bgm=%s",
+                    sid, len(usable), len(audio_map), "yes" if bgm_path else "no")
+
+    scene_clips = []
+    scene_durations = []
+
+    try:
+        for entry in usable:
+            i = entry["_idx"]
+            audio_dur = audio_map.get(i, {}).get("duration", 0) or 0
+            voice_text = entry.get("voice_script") or entry.get("narration") or entry.get("subtitle") or ""
+
+            # 获取视频/图片片段
+            if entry.get("video_mode") == "ken_burns":
+                vid_clip = _make_ken_burns_clip(entry["image_path"], 5.0)
+                vid_dur = vid_clip.duration
+            else:
+                vid_clip = VideoFileClip(entry["video_path"]).without_audio()
+                vid_dur = vid_clip.duration
+
+            # target = max(视频时长, 音频时长)
+            target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
+            target_dur = max(target_dur, 1.0)
+
+            video_w, video_h = vid_clip.size
+            mode_str = "Ken Burns" if entry.get("video_mode") == "ken_burns" else "视频"
+
+            if entry.get("video_mode") == "ken_burns":
+                vid_clip.close()
+                vid_clip = _make_ken_burns_clip(entry["image_path"], target_dur)
+            elif vid_dur < target_dur - 0.1:
+                # 视频短于目标 → 补帧延长
+                vid_clip = _extend_video(vid_clip, target_dur)
+                # 视频短于目标 → 慢放
+                # from moviepy import vfx
+                # speed = vid_dur / target_dur
+                # vid_clip = vid_clip.with_effects([vfx.MultiplySpeed(speed)])
+                # speedx 可能时长不精确，截断
+                # if vid_clip.duration > target_dur + 0.1:
+                #     vid_clip = vid_clip.subclipped(0, target_dur)
+            elif vid_dur > target_dur + 0.1:
+                vid_clip = vid_clip.subclipped(0, target_dur)
+
+            scene_clips.append(vid_clip)
+            scene_durations.append(target_dur)
+            svc_logger.info("[assemble] scene%d %s %.1fs (音频 %.1fs)", i, mode_str, target_dur, audio_dur)
+
+        # 拼接视频
+        final_video = concatenate_videoclips(scene_clips, method="compose")
+
+        # 计算起始时间
+        scene_starts = []
+        t = 0
+        for dur in scene_durations:
+            scene_starts.append(t)
+            t += dur
+
+        # ── 2. 旁白音轨 ──
+        has_voiceover = False
+        audio_clips_for_mix = []
+        for entry, dur, start in zip(usable, scene_durations, scene_starts):
+            i = entry["_idx"]
+            if i in audio_map:
+                clip = AudioFileClip(audio_map[i]["path"])
+                if clip.duration > dur:
+                    clip = clip.subclipped(0, dur)
+                clip = clip.with_start(start)
+                audio_clips_for_mix.append(clip)
+                has_voiceover = True
+
+        voiceover = None
+        if has_voiceover:
+            voiceover = CompositeAudioClip(audio_clips_for_mix)
+
+        # ── 3. 混音：旁白 + BGM ──
+        if has_voiceover and bgm_path:
+            svc_logger.info("[assemble] 混入 BGM + 旁白")
+            bgm = AudioFileClip(str(bgm_path))
+            video_dur = final_video.duration
+            if bgm.duration < video_dur:
+                bgm = bgm.loop(duration=video_dur)
+            else:
+                bgm = bgm.subclipped(0, video_dur)
+            bgm = bgm.with_volume_scaled(0.2)
+            mixed = CompositeAudioClip([voiceover, bgm])
+            final_video = final_video.with_audio(mixed)
+        elif has_voiceover:
+            svc_logger.info("[assemble] 使用旁白音轨（无 BGM）")
+            final_video = final_video.with_audio(voiceover)
+        elif bgm_path:
+            svc_logger.info("[assemble] 混入 BGM（无旁白）")
+            bgm = AudioFileClip(str(bgm_path))
+            video_dur = final_video.duration
+            if bgm.duration < video_dur:
+                bgm = bgm.loop(duration=video_dur)
+            else:
+                bgm = bgm.subclipped(0, video_dur)
+            bgm = bgm.with_volume_scaled(0.3)
+            final_video = final_video.with_audio(bgm)
+
+        # ── 4. 字幕（可选，moviepy TextClip 在 Windows 上需要 ImageMagick）──
+        try:
+            has_subtitles = any(
+                (s.get("voice_script") or s.get("narration") or s.get("subtitle") or "").strip()
+                for s in usable
+            )
+            if has_subtitles:
+                subtitle_clip = _build_subtitle_clip(
+                    usable, scene_durations, scene_starts, (video_w, video_h)
+                )
+                if subtitle_clip:
+                    final_video = CompositeVideoClip([final_video, subtitle_clip])
+                    svc_logger.info("[assemble] 字幕已叠加")
+        except Exception as e:
+            svc_logger.warning("[assemble] 字幕叠加失败: %s", e)
+
+        # ── 5. 输出 ──
+        FINAL_DIR.mkdir(parents=True, exist_ok=True)
+        out_filename = f"final_{sid}_{int(time.time())}.mp4"
+        out_path = FINAL_DIR / out_filename
+        svc_logger.info("[assemble] 渲染输出 → %s", out_path)
+        final_video.write_videofile(
+            str(out_path), codec="libx264", audio_codec="aac", logger=None, fps=24
+        )
+        final_video.close()
+
+        video_url = f"/api/outputs/final_cuts/{out_filename}"
+        return {
+            "ok": True,
+            "video_url": video_url,
+            "duration_sec": round(sum(scene_durations), 1),
+            "scenes_count": len(usable),
+        }
+
+    except Exception as e:
+        svc_logger.exception("[assemble] failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+    finally:
+        for c in scene_clips:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+# ── BGM 匹配 ──────────────────────────────────────────────────────────
+
+
+def _gen_bgm_prompt(style) -> str:
+    """根据人物信息和风格偏好，生成 BGM 风格描述。"""
+    tags = _BGM_STYLE_MAP.get(style, "warm, nostalgic, gentle, piano, emotional")
+    tags += ", memorial, cinematic, instrumental"
+    return tags
+
+
+def match_bgm(sid: str) -> dict:
+    """Suno 生成 BGM（带缓存）→ 返回 {bgm_url, emotion, duration_sec}。"""
+    s = session_store.require(sid)
+    style = s.get("form_data", {}).get("style_preference", "warm_nostalgia")
+
+
+    # 1) 查 session 缓存
+    if _CACHE_MODE == "playback":
+        existing_bgm = s.get("audio", {}).get("bgm", {})
+        if existing_bgm.get("emotion") == style and existing_bgm.get("bgm_url"):
+            cached_path = _url_to_local_path(existing_bgm["bgm_url"])
+            if cached_path and cached_path.exists():
+                svc_logger.info("[bgm] session cache hit sid=%s emotion=%s", sid, style)
+                return existing_bgm
+
+    # 3) 生成
+    name = s.get("form_data", {}).get("deceased_name", "未知亲人")
+    tags = _gen_bgm_prompt(style)
+    audio_bytes = generate_bgm_suno(tags=tags, title=f"追思 · {name}")
+
+    result: Dict[str, Any] = {
+        "emotion": style,
+        "bgm_url": None,
+        "duration_sec": None,
+    }
+
+    if not audio_bytes:
+        raise ValueError(f"BGM 生成失败：Suno 未返回音频数据 (style={style}, name={name})")
+
+    if audio_bytes:
+        ext = "mp3"
+        filename = f"bgm_{style}_{_uuid.uuid4().hex[:8]}.{ext}"
+        path = AUDIO_OUTPUT_DIR / filename
+        path.write_bytes(audio_bytes)
+        url = f"/api/outputs/generated/audio/{filename}"
+        result["bgm_url"] = url
+        result["duration_sec"] = _get_wav_duration(audio_bytes)
+        svc_logger.info("[bgm] sid=%s style=%s url=%s size=%d", sid, style, url, len(audio_bytes))
+
+    s.setdefault("audio", {})
+    s["audio"]["bgm"] = result
+    session_store.update(sid)
+    return result
+
+
+# ── MV06 前置音频流程 ─────────────────────────────────────────────────
+def _run_mv06_work(sid: str) -> None:
+    """后台执行 MV06 完整流程。结果写入 session pipeline_state。"""
+    import traceback
+
+    def _set_progress(step: str, label: str) -> None:
+        """更新 MV06 进度到 session。"""
+        try:
+            s = session_store.require(sid)
+            s["pipeline_state"]["MV06"] = {
+                "status": "running",
+                "step": step,
+                "label": label,
+                "duration_sec": None,
+                "error": None,
+            }
+            session_store.update(sid)
+        except Exception:
+            pass
+
+    try:
+        s = session_store.require(sid)
+        gate = s["gate"]
+
+        # 1. 自动批准 MV05 闸门
+        _set_progress("approving", "准备中…")
+        gate_manager.approve(gate, "MV05")
+        s["pipeline_state"]["MV05"] = {"status": "approved", "duration_sec": None, "error": None}
+        session_store.update(sid)
+        svc_logger.info("[mv06.pre] MV05 gate auto-approved sid=%s", sid)
+
+        # 2. TTS 合成
+        _set_progress("tts_running", "TTS语音合成中…")
+        scenes = _get_scenes_from_mv04(s["mv_outputs"].get("MV04"))
+        tts_segments = generate_tts_segments(sid, scenes)
+        s.setdefault("audio", {})
+        s["audio"]["tts_segments"] = tts_segments
+        if tts_segments:
+            session_store.update(sid)
+            svc_logger.info("[mv06.pre] TTS synthesized %d segments sid=%s", len(tts_segments), sid)
+        _set_progress("tts_done", "已完成TTS语音合成")
+
+        # 3. BGM 匹配
+        _set_progress("bgm_running", "BGM背景音乐匹配中…")
+        bgm_result = generate_bgm(sid)
+        _set_progress("bgm_done", "已完成BGM背景音乐匹配")
+
+        # 4. 视频拼接
+        _set_progress("video_running", "视频合成中…")
+        _t0 = time.time()
+        video_result = assemble_final_video(s)
+        _dur = round(time.time() - _t0, 1)
+        if video_result.get("ok"):
+            _set_progress("video_done", "视频合成完成")
+
+        # 附加结果
+        if video_result.get("ok"):
+            video_result.setdefault("audio", {})
+            video_result["audio"]["tts_segments"] = tts_segments
+            video_result["audio"]["bgm"] = bgm_result
+
+        s["pipeline_state"]["MV06"] = {
+            "status": "done" if video_result.get("ok") else "error",
+            "step": "done" if video_result.get("ok") else "error",
+            "label": "视频合成完成" if video_result.get("ok") else "合成失败",
+            "duration_sec": _dur,
+            "error": video_result.get("error"),
+        }
+        s.setdefault("mv06_result", {})
+        s["mv06_result"] = video_result
+        if video_result.get("ok"):
+            s["mv06_result"]["final_video_url"] = video_result["video_url"]
+        session_store.update(sid)
+        svc_logger.info("[mv06] completed sid=%s ok=%s", sid, video_result.get("ok"))
+
+    except Exception:
+        s = session_store.require(sid)
+        tb = traceback.format_exc()
+        s["pipeline_state"]["MV06"] = {
+            "status": "error",
+            "step": "error",
+            "label": "合成失败",
+            "duration_sec": None,
+            "error": tb,
+        }
+        s["mv06_result"] = {"ok": False, "error": tb}
+        session_store.update(sid)
+        svc_logger.error("[mv06] background failed sid=%s\n%s", sid, tb)
+
+
+def run_mv06_with_audio(sid: str) -> None:
+    """提交 MV06 流程到后台线程执行，立即返回。"""
+    import threading
+
+    threading.Thread(target=_run_mv06_work, args=(sid,), daemon=True).start()
+    svc_logger.info("[mv06] background task submitted sid=%s", sid)
+
+
+# ── 重置步骤 ──────────────────────────────────────────────────────────────
+
+# 每个 MV 步骤对应的磁盘文件清理规则（函数返回 glob pattern 列表）
+def _step_file_patterns(sid: str, mv_id: str) -> List[tuple]:
+    """返回指定步骤需要清理的文件 (目录, glob) 列表。"""
+    patterns: List[tuple] = []
+    if mv_id in ("MV01", "MV02", "MV03", "MV04"):
+        # MV04 生成的分镜图片和视频
+        patterns.append((GEN_IMAGES_DIR, f"{sid}_scene*.png"))
+        patterns.append((GEN_VIDEOS_DIR, f"{sid}_scene*.mp4"))
+    if mv_id == "MV06":
+        patterns.append((FINAL_DIR, f"final_{sid}_*.mp4"))
+        patterns.append((AUDIO_OUTPUT_DIR, f"bgm_*.mp3"))
+    return patterns
+
+
+def reset_step(sid: str, mv_id: str) -> Dict[str, Any]:
+    """重置指定 MV 步骤及其后续步骤的状态，清理关联的磁盘文件。"""
+    mv_id = mv_id.upper()
+    if mv_id not in gate_manager.GATE_ORDER:
+        return {"ok": False, "message": f"unknown step: {mv_id}"}
+
+    s = session_store.require(sid)
+    idx = gate_manager.GATE_ORDER.index(mv_id)
+    downstream = gate_manager.GATE_ORDER[idx:]
+
+    # 1. 重置 gate 状态
+    gate_manager.reset_from(s["gate"], mv_id)
+
+    # 2. 重置 pipeline_state
+    for step in downstream:
+        s["pipeline_state"][step] = {"status": "pending", "duration_sec": None, "error": None}
+
+    # 3. 清除 mv_outputs
+    for step in downstream:
+        s["mv_outputs"].pop(step, None)
+
+    # 4. 清除附加数据
+    if "mv06_result" in s:
+        del s["mv06_result"]
+
+    # 5. 清理磁盘文件（仅清理当前 sid 关联的）
+    deleted_files = []
+    for step in downstream:
+        for dir_path, pattern in _step_file_patterns(sid, step):
+            for f in dir_path.glob(pattern):
+                f.unlink()
+                deleted_files.append(str(f))
+
+    session_store.update(sid)
+    svc_logger.info("[reset] sid=%s from=%s deleted=%d files", sid, mv_id, len(deleted_files))
+    return {"ok": True, "reset_from": mv_id, "deleted_files": deleted_files}

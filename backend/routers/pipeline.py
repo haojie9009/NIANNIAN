@@ -1,7 +1,7 @@
 # backend/routers/pipeline.py
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 
 from services import service_manager as sm
 from services import session_store
@@ -10,10 +10,21 @@ router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 @router.post("/run/{step}/{sid}")
-def run_step(step: str, sid: str) -> Dict[str, Any]:
+def run_step(step: str, sid: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     step = step.upper()
     if step not in sm.MV_FILES:
         raise HTTPException(400, f"unknown step: {step}")
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    # MV06 前置音频流程：自动批准 MV05 → TTS → BGM → 执行 MV06 → 视频拼接
+    if step == "MV06":
+        s = session_store.require(sid)
+        s["pipeline_state"]["MV06"] = {"status": "running", "step": "submitted", "label": "任务已提交", "duration_sec": None, "error": None}
+        session_store.update(sid)
+        background_tasks.add_task(sm.run_mv06_with_audio, sid)
+        return {"ok": True, "status": "running", "message": "MV06 pipeline started, poll /status for progress"}
     return sm.run_pipeline_step(sid, step)
 
 
@@ -23,11 +34,19 @@ def status(sid: str) -> Dict[str, Any]:
         s = session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    return {
+    result = {
         "pipeline_state": s["pipeline_state"],
         "gate_status":    s["gate"]["gate_status"],
         "mv_outputs":     list(s["mv_outputs"].keys()),
     }
+    # 附加 MV06 结果（如果有）
+    if "mv06_result" in s:
+        mr = s["mv06_result"]
+        if mr.get("ok"):
+            result["video_url"] = mr.get("final_video_url", "")
+        else:
+            result["error_detail"] = mr.get("error", "未知错误")
+    return result
 
 
 @router.get("/output/{sid}/{step}")
@@ -51,7 +70,21 @@ def preview(sid: str) -> Dict[str, Any]:
     except KeyError:
         raise HTTPException(404, "session not found")
     text = sm.memorial_preview(s["form_data"], s["mv_outputs"].get("MV01"))
+    session_store.update(sid, preview_text=text)
     return {"text": text}
+
+
+@router.post("/reset/{sid}/{mv_id}")
+def reset_step(sid: str, mv_id: str) -> Dict[str, Any]:
+    """重置指定 MV 步骤及其后续步骤的状态，清理关联磁盘文件。"""
+    mv_id = mv_id.upper()
+    if mv_id not in sm.MV_FILES:
+        raise HTTPException(400, f"unknown step: {mv_id}")
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return sm.reset_step(sid, mv_id)
 
 
 @router.post("/run-all/{sid}")
@@ -113,5 +146,13 @@ def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai") 
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
+
+    # task_id 无效时，检查磁盘缓存（playback 模式或 gen_scene_video 已命中缓存但前端未感知）
+    if not task_id or task_id == "undefined":
+        cached = sm.get_cached_scene_video(sid, idx)
+        if cached:
+            return {"status": "done", "url": cached, "cached": True}
+        return {"status": "failed", "message": "task_id 无效且无本地缓存"}
+
     return sm.poll_scene_video(task_id, source, sid, idx)
 

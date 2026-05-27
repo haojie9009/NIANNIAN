@@ -99,7 +99,7 @@
     "scene_01": {
       "scene_id": "scene_01",
       "scene_ref": "kitchen_morning",
-      "time": "00:00-00:15",
+      "time": "00:00-00:05",
       "shot_type": "Extreme close-up shot",
       "description": "小米粥在砂锅里慢慢沸腾，蒸汽袅袅",
       "voice_script": "退休后，他成了家里的依靠。每天早上五点起床煮粥，这一煮，就是四十年。",
@@ -112,7 +112,7 @@
     "scene_02": {
       "scene_id": "scene_02",
       "scene_ref": "kitchen_morning",
-      "time": "00:15-00:30",
+      "time": "00:05-00:10",
       "shot_type": "Medium shot",
       "description": "他在厨房忙碌的背影，晨光斜射进来",
       "voice_script": "他话不多，却把爱都煮进了粥里。",
@@ -124,7 +124,7 @@
     },
     "scene_03": {
       "scene_id": "scene_03",
-      "time": "00:30-00:45",
+      "time": "00:10-00:15",
       "shot_type": "Medium shot",
       "description": "旧照：与孙辈合影",
       "voice_script": "",
@@ -143,5 +143,6 @@
 - `scene_ref`：对应 `scene_library` 中的 `scene_id`，MV05 阶段 `build_scene_prompts()` 会自动匹配并将 `visual_descriptor` 注入 image_prompt/video_prompt。**凡 `ai_generated` 场景必须填写。**
 - `character_bible` 由 AI 根据 MV01 肖像描述与 MV02 定稿信息自动生成，字段 `facial_features`/`body_features`/`clothing_style`/`mannerisms` 须用**英文**填写，以便直接嵌入 image_prompt。
 - `scene_library` 的 `visual_descriptor` 同样用英文写，描述粒度到：光线方向、陈设年代感、地面/墙面材质、空气质感。
-
-**说明**：纯资料镜可无口播，`voice_script` 为空串；与成片时长、朗读气口的对齐在 **MV05 / MV06** 的脚本结构中体现，具体 TTS/合成由工程执行。
+- `voice_script` 用中文，是画面配音旁白，控制在 25个字以内（ 5 秒内），精炼有感染力，不要长句。
+最多生成 3-4个分镜（scenes）, 除了第一个分镜，其他分镜按人物年龄从小到大排序。
+**说明**： 具体 TTS/合成由工程执行。
