@@ -28,3 +28,7 @@ data/cache/*
 asset/*
 *.mp4
 *.wav
+
+.claude/
+backend/.claude/
+.obsidian/

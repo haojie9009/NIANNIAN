@@ -149,9 +149,6 @@ def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai") 
 
     # task_id 无效时，检查磁盘缓存（playback 模式或 gen_scene_video 已命中缓存但前端未感知）
     if not task_id or task_id == "undefined":
-        cached = sm.get_cached_scene_video(sid, idx)
-        if cached:
-            return {"status": "done", "url": cached, "cached": True}
         return {"status": "failed", "message": "task_id 无效且无本地缓存"}
 
     return sm.poll_scene_video(task_id, source, sid, idx)
