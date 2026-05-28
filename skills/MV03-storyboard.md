@@ -13,7 +13,7 @@
 在 **MV01 / MV02** 定稿数据上，一次性产出：
 
 1. **风格与画面参数**（内嵌 `style_profile`，不拆独立 Skill）：视觉后缀、转场、色调与文案基调。  
-2. **工业分镜表**：每镜时长、景别、画面描述、绘图/视频用 `mj_prompt`、运动、素材引用。  
+2. **工业分镜表**：每镜时长、景别、画面描述、绘图/视频用 `mj_prompt`、运动、素材引用。**必须有足够多的人物主动动作镜头，避免全片缓慢静态。**  
 3. **口播文稿**：与镜头对齐的旁白/讲述文本（数字人面向观者的讲述），**每镜 `voice_script` 与分镜一一对应**。
 
 不再单独维护「整场追悼会仪式流」或「家属致辞 Skill」；若需第一人称金句，写入对应镜的 `voice_script` 即可。
@@ -32,7 +32,7 @@
 
 1. 根据 `target_duration_sec` 拆镜并分配时长；总时长误差建议 ±5 秒内。  
 2. 填写 `style_profile`（由原 `style_preference` / `emotional_intensity` 映射）。  
-3. 每镜写 `mj_prompt`：人物外观可先用 MV01 肖像描述；**MV04 会把人物/场景/道具锁定为圣经**，MV05 画面生成必须以 MV04 锁定版本为准，因此 MV03 中出现的新场景/新道具应尽量显式写出，便于 MV04 收敛去重。  
+3. 每镜写 `mj_prompt`：人物外观可先用 MV01 肖像描述；**MV04 会把人物/场景/道具锁定为圣经**，MV05 画面生成必须以 MV04 锁定版本为准，因此 MV03 中出现的新场景/新道具应尽量显式写出，便于 MV04 收敛去重。**写 `mj_prompt` 时必须明确写出人物正在执行的具体动作（如 walking toward / raising hand / turning around / carrying something），不要只描述静态站姿或模糊的"standing"。**  
 4. `mj_prompt` 句末不手写死画幅参数；顶层 `aspect_ratio` 表达成片比例意图，具体如何传给出图服务由工程处理。  
 5. 优先引用 `user_asset`；否则标记 AI 生成。  
 6. 负面提示词统一置于 `negative_prompt`（可全局一份）。
@@ -61,7 +61,7 @@
       "facial_features": "75-year-old Chinese man, deeply wrinkled face, kind gentle eyes behind silver rectangular glasses, silver-white hair combed back neatly",
       "body_features": "medium build, slightly hunched posture from years of labor, broad weathered hands with calloused fingers",
       "clothing_style": "dark grey Zhongshan suit (中山装), plain white inner shirt, black cloth shoes",
-      "mannerisms": "moves slowly and deliberately, tends to look down at his hands when thinking, quiet dignified presence"
+      "mannerisms": "moves with quiet purpose, tends to look down at his hands when thinking, gestures are small but meaningful, carries himself with earned confidence"
     }
   },
   "scene_library": [
@@ -89,7 +89,7 @@
   "style_profile": {
     "style_id": "warm_nostalgia",
     "emotional_intensity": "moderate",
-    "visual_suffix": "vintage 2000s Chinese home video aesthetic, warm golden sunlight, soft focus, nostalgic vibe, realistic texture --v 7",
+    "visual_suffix": "vintage 2000s Chinese home video aesthetic, warm golden sunlight, natural motion blur on moving subjects, authentic documentary feel, realistic texture --v 7",
     "color_palette": ["#FFD700", "#FFF8DC", "#D2B48C", "#8B4513"],
     "tone": "empathetic, gentle, conversational",
     "transition_style": "slow_crossfade"
@@ -106,7 +106,7 @@
       "asset_type": "ai_generated_video",
       "mj_prompt": "Extreme close-up shot of millet porridge boiling slowly in a clay pot, steam rising gently, warm amber morning light, humble Chinese rural kitchen background, soft focus, photorealistic",
       "negative_prompt": "ugly, deformed, blurry, extra limbs, disfigured, cartoon, anime, illustration",
-      "motion": "slow_pan_right",
+      "motion": "gentle_push_in_with_rising_steam",
       "fallback_asset": "default_porridge.jpg"
     },
     "scene_02": {
@@ -119,7 +119,7 @@
       "asset_type": "ai_generated_video",
       "mj_prompt": "Medium shot of elderly Chinese man's back silhouette in humble kitchen, dark grey Zhongshan suit, silver hair, warm amber morning light through small window, clay stove, steam, 2000s China rural aesthetic, photorealistic",
       "negative_prompt": "ugly, deformed, blurry, extra limbs, disfigured, cartoon, anime, illustration, young man, western style",
-      "motion": "slow_zoom_in",
+      "motion": "tracking_follow",
       "fallback_asset": "photo_01"
     },
     "scene_03": {
@@ -132,17 +132,28 @@
       "asset_ref": "photo_05",
       "mj_prompt": null,
       "negative_prompt": null,
-      "motion": "slow_zoom_out",
+      "motion": "gentle_pull_back",
       "fallback_asset": "photo_05"
     }
   }
-}
 ```
+
+**运动词汇 `motion` 可选值与示例**（鼓励多样化使用，避免全部使用 slow_ 前缀）：
+
+| 类型 | 值 | 效果 |
+|------|-----|------|
+| 缓慢运动 | `slow_pan_left` / `slow_pan_right` / `slow_zoom_in` / `slow_zoom_out` / `gentle_push_in` / `gentle_pull_back` | 情绪铺垫、环境展示 |
+| 跟随运动 | `tracking_follow` / `tracking_side` / `tracking_behind` | 跟拍人物行走/做事 |
+| 动态动作 | `handheld_shake` / `quick_pan` / `whip_pan` / `dynamic_zoom_in` / `orbit_around_subject` | 强调动作力度或情绪爆发 |
+| 微动态 | `subtle_drift` / `floating` / `breathing_motion` | 照片活化、轻微生命感 |
+| 组合 | `tracking_follow_with_rising_steam` / `gentle_push_in_with_handheld` | 自定义组合（用 with_ 连接） |
+
+> **分镜动态分布要求**：8-16 个分镜中，至少 **40% 的镜头**需包含人物主动动作（如走路、挥手、做事、转身、互动等），不能仅用缓慢运镜或静态画面填充。每个含人物动作的镜头应在 `description` 和 `mj_prompt` 中明确写出人物正在执行的具体动作，并在 `motion` 字段选用"跟随运动"或"动态动作"类型与之匹配。
 
 **场景字段说明**：
 - `scene_ref`：对应 `scene_library` 中的 `scene_id`，MV05 阶段 `build_scene_prompts()` 会自动匹配并将 `visual_descriptor` 注入 image_prompt/video_prompt。**凡 `ai_generated` 场景必须填写。**
 - `character_bible` 由 AI 根据 MV01 肖像描述与 MV02 定稿信息自动生成，字段 `facial_features`/`body_features`/`clothing_style`/`mannerisms` 须用**英文**填写，以便直接嵌入 image_prompt。
 - `scene_library` 的 `visual_descriptor` 同样用英文写，描述粒度到：光线方向、陈设年代感、地面/墙面材质、空气质感。
 - `voice_script` 用中文，是画面配音旁白，控制在 25个字以内（ 5 秒内），精炼有感染力，不要长句。
-最多生成 3-4个分镜（scenes）, 除了第一个分镜，其他分镜按人物年龄从小到大排序。
+生成 8-16个分镜（scenes）, 除了第一个分镜，其他分镜按人物年龄从小到大排序。
 **说明**： 具体 TTS/合成由工程执行。
