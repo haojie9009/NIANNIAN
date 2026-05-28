@@ -140,9 +140,41 @@ button{font-family:inherit;cursor:pointer;}
 /* 上传区 */
 .upload-zone{display:block;width:100%;box-sizing:border-box;cursor:pointer;border:2px dashed var(--border-h);border-radius:14px;padding:32px 24px;text-align:center;color:var(--muted-l);font-size:.88rem;background:var(--surf2);transition:all .2s;user-select:none;}
 .upload-zone:hover{background:var(--surf3);border-color:var(--gold);}
-.upload-input{display:none;}
+.upload-input{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}
 .upload-list{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
 .upload-thumb{width:80px;height:80px;border-radius:10px;object-fit:cover;border:1px solid var(--border);}
+
+/* 上传卡片（带选择器） */
+.upload-card{
+  position: relative;
+  display:flex;flex-direction:column;gap:6px;
+  width:120px;padding:8px;border-radius:10px;
+  border:1px solid var(--border);background:var(--surf2);
+}
+.upload-card-status{font-size:.7rem;color:var(--green);}
+.upload-card-selectors{display:flex;flex-direction:column;gap:4px;}
+.upload-card-selectors select{
+  -webkit-appearance:none; -moz-appearance:none; appearance:none;
+  width:100%;min-height:24px;font-size:.75rem;padding:3px 8px;
+  border:1px solid var(--border);border-radius:6px;
+  background:var(--surf);color:var(--ink);
+  cursor:pointer;
+}
+.upload-card-delete{
+  position:absolute;top:2px;right:2px;
+  width:20px;height:20px;border:none;border-radius:50%;
+  background:rgba(0,0,0,.5);color:#fff;font-size:14px;
+  line-height:20px;text-align:center;cursor:pointer;
+  padding:0;display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .15s,background .15s;
+}
+.upload-card:hover .upload-card-delete{opacity:1;}
+.upload-card-delete:hover{background:var(--red);}
+.video-thumb{
+  display:flex;align-items:center;justify-content:center;
+  width:120px;height:80px;border-radius:10px;
+  background:var(--surf3);font-size:.7rem;color:var(--muted-l);
+}
 
 @media (max-width:640px){
   .form-grid{grid-template-columns:1fr;}

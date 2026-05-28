@@ -19,6 +19,8 @@ _ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".m4a"
 async def upload(
     session_id: str = Form(...),
     period: str = Form("default"),
+    subject: str = Form("deceased"),       # deceased | family | group | other
+    period_label: str = Form(""),           # 青年 | 中年 | 老年 | 空
     file: UploadFile = File(...),
 ) -> Dict[str, Any]:
     try:
@@ -35,10 +37,12 @@ async def upload(
     fpath.write_bytes(await file.read())
 
     s["assets"].append({
-        "filename": file.filename,
-        "saved_as": fname,
-        "period":   period,
-        "url":      f"/api/assets/file/{fname}",
+        "filename":     file.filename,
+        "saved_as":     fname,
+        "period":       period,
+        "subject":      subject,
+        "period_label": period_label,
+        "url":          f"/api/assets/file/{fname}",
     })
     return {"ok": True, "asset": s["assets"][-1], "total": len(s["assets"])}
 
@@ -49,6 +53,28 @@ def file_get(name: str) -> FileResponse:
     if not fpath.exists():
         raise HTTPException(404, "file not found")
     return FileResponse(fpath)
+
+
+@router.post("/update-meta")
+async def update_meta(
+    session_id: str = Form(...),
+    asset_url: str = Form(...),
+    subject: str = Form("deceased"),
+    period_label: str = Form(""),
+) -> Dict[str, Any]:
+    try:
+        s = session_store.require(session_id)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+
+    for asset in s["assets"]:
+        if asset.get("url") == asset_url:
+            asset["subject"] = subject
+            asset["period_label"] = period_label
+            session_store.update(session_id)
+            return {"ok": True}
+
+    raise HTTPException(404, "asset not found")
 
 
 @router.get("/background")
@@ -67,4 +93,34 @@ def list_assets(sid: str) -> Dict[str, Any]:
         s = session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    return {"assets": s["assets"]}
+    # 过滤掉磁盘上已不存在的文件，同步清理内存列表
+    alive = [a for a in s["assets"] if (sm.UPLOADS_DIR / a.get("saved_as", "")).exists()]
+    if len(alive) != len(s["assets"]):
+        s["assets"] = alive
+        session_store.update(sid)
+    return {"assets": alive}
+
+
+@router.post("/delete")
+def delete_asset(
+    session_id: str = Form(...),
+    asset_url: str = Form(...),
+) -> Dict[str, Any]:
+    """删除已上传的资产：移除磁盘文件并从 session 列表中剔除。"""
+    try:
+        s = session_store.require(session_id)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+
+    asset = next((a for a in s["assets"] if a.get("url") == asset_url), None)
+    if asset is None:
+        raise HTTPException(404, "asset not found")
+
+    fpath = sm.UPLOADS_DIR / asset.get("saved_as", "")
+    if fpath.exists():
+        fpath.unlink()
+
+    s["assets"] = [a for a in s["assets"] if a.get("url") != asset_url]
+    session_store.update(session_id)
+
+    return {"ok": True, "deleted": asset.get("saved_as", "")}

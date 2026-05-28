@@ -197,11 +197,33 @@ async function genScenes() {
 async function genSceneImage(idx) {
   const sc = state.scenes[idx];
   if (!sc) return;
+
+  // 获取用户上传的照片列表（仅图片，不含视频）
+  let reference_photo_url = '';
+  try {
+    const assetsRes = await apiGet(`/assets/list/${state.sid}`);
+    const photos = (assetsRes.assets || []).filter(a =>
+      a.filename && a.filename.match(/\.(jpg|jpeg|png|webp|gif)$/i)
+    );
+    if (photos.length > 0) {
+      // 仅使用标记为"逝者"的照片，无标记则不传参考图
+      const deceased = photos.find(p => p.subject === 'deceased');
+      reference_photo_url = deceased ? deceased.url : '';
+    }
+  } catch (e) {
+    console.warn('[genSceneImage] 获取照片列表失败：', e.message);
+  }
+
   sc._img_status = 'run';
+  sc._img_loaded = false;
   renderScenes();
   setPill('MV05', 'active');
   try {
-    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, {});
+    const payload = {};
+    if (reference_photo_url) {
+      payload.reference_photo_url = reference_photo_url;
+    }
+    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, payload);
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
@@ -624,23 +646,31 @@ async function bootstrap() {
   } catch {
     $('charSummary').innerHTML = `<div class="text-muted" style="color:var(--red);">未找到角色档案，请先在「方案确认台」完成前期流程。</div>`;
   }
-  // 2. 已有 MV04 则直接展示
+  // 2. 已有 MV04 则直接展示（record 模式下跳过，始终显示"生成分镜"按钮）
+  let cacheMode = '';
   try {
-    const r = await apiGet(`/pipeline/scenes/${state.sid}`);
-    if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
-      state.scenes = r.scenes;
-      setPill('MV04', 'done');
-      hide('phaseGenScenes');
-      show('phaseScenes');
-      renderScenes();
-      // 恢复未完成视频的分镜轮询
-      state.scenes.forEach((sc, i) => {
-        if (sc._video_task_id && !sc._vid_url) {
-          resumeSceneVideoPoll(i);
-        }
-      });
-    }
-  } catch { /* 没生成过则保持初始 UI */ }
+    const statusR = await apiGet(`/pipeline/status/${state.sid}`);
+    cacheMode = statusR.cache_mode || '';
+  } catch { /* 忽略 */ }
+
+  if (cacheMode !== 'record') {
+    try {
+      const r = await apiGet(`/pipeline/scenes/${state.sid}`);
+      if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
+        state.scenes = r.scenes;
+        setPill('MV04', 'done');
+        hide('phaseGenScenes');
+        show('phaseScenes');
+        renderScenes();
+        // 恢复未完成视频的分镜轮询
+        state.scenes.forEach((sc, i) => {
+          if (sc._video_task_id && !sc._vid_url) {
+            resumeSceneVideoPoll(i);
+          }
+        });
+      }
+    } catch { /* 没生成过则保持初始 UI */ }
+  }
   // 3. 恢复 MV06 状态（缓存视频 / 恢复轮询）
   try {
     await resumeMV06();

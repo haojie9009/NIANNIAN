@@ -1445,7 +1445,7 @@ def generate_video_302ai_i2v(
                     mime = header_part.split(":")[1].split(";")[0]
                     ext = mime.split("/")[-1] if "/" in mime else "png"
                     img_bytes = base64.b64decode(b64_part)
-                    files["image"] = (f"frame.{ext}", img_bytes, mime)
+                    files["input_image"] = (f"frame.{ext}", img_bytes, mime)
                 except Exception as e:
                     return {"error": f"base64 图片解析失败：{e}", "source": "302ai"}
             else:
