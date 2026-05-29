@@ -71,21 +71,35 @@ function renderScenes() {
       vidStatus === 'err'  ? '<span class="badge badge-err">失败</span>' :
                               '<span class="badge badge-idle">未生成</span>';
 
-    const imgHtml = sc._img_url
-      ? `<div class="media-slot has-media">
+    let imgHtml;
+    if (sc._img_url && sc._img_loaded) {
+      imgHtml = `<div class="media-slot has-media">
            <img class="zoomable" data-idx="${i}" src="${esc(sc._img_url)}" alt="scene image">
            <div class="media-cap">点击图片放大查看</div>
-         </div>`
-      : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
+         </div>`;
+    } else if (sc._img_url) {
+      imgHtml = `<div class="media-slot">${imgBadge}
+           <button class="btn btn-sm" data-act="viewimg" data-idx="${i}" style="margin-top:6px;">查看图片</button>
+         </div>`;
+    } else {
+      imgHtml = `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
+    }
 
-    const vidHtml = sc._vid_url
-      ? `<div class="media-slot has-media">
-           <video controls preload="metadata" src="${esc(sc._vid_url)}"></video>
+    let vidHtml;
+    if (sc._vid_url && sc._vid_loaded) {
+      vidHtml = `<div class="media-slot has-media">
+           <video controls preload="none" data-src="${esc(sc._vid_url)}"></video>
            <div class="media-cap" style="margin-top:6px;">
              <a class="btn btn-sm" href="${esc(sc._vid_url)}" download="scene-${String(i + 1).padStart(2, '0')}.mp4" target="_blank">下载视频</a>
            </div>
-         </div>`
-      : `<div class="media-slot"><div class="media-cap">短视频</div>${vidBadge}</div>`;
+         </div>`;
+    } else if (sc._vid_url) {
+      vidHtml = `<div class="media-slot">${vidBadge}
+           <button class="btn btn-sm" data-act="viewvid" data-idx="${i}" style="margin-top:6px;">查看视频</button>
+         </div>`;
+    } else {
+      vidHtml = `<div class="media-slot"><div class="media-cap">短视频</div>${vidBadge}</div>`;
+    }
 
     list.insertAdjacentHTML('beforeend', `
       <div class="scene-row" data-idx="${i}">
@@ -110,6 +124,13 @@ function renderScenes() {
       const idx = +btn.dataset.idx;
       if (act === 'img') genSceneImage(idx);
       else if (act === 'vid') genSceneVideo(idx);
+      else if (act === 'viewimg') {
+        state.scenes[idx]._img_loaded = true;
+        renderScenes();
+      } else if (act === 'viewvid') {
+        state.scenes[idx]._vid_loaded = true;
+        renderScenes();
+      }
     };
   });
 
@@ -176,14 +197,37 @@ async function genScenes() {
 async function genSceneImage(idx) {
   const sc = state.scenes[idx];
   if (!sc) return;
+
+  // 获取用户上传的照片列表（仅图片，不含视频）
+  let reference_photo_url = '';
+  try {
+    const assetsRes = await apiGet(`/assets/list/${state.sid}`);
+    const photos = (assetsRes.assets || []).filter(a =>
+      a.filename && a.filename.match(/\.(jpg|jpeg|png|webp|gif)$/i)
+    );
+    if (photos.length > 0) {
+      // 仅使用标记为"逝者"的照片，无标记则不传参考图
+      const deceased = photos.find(p => p.subject === 'deceased');
+      reference_photo_url = deceased ? deceased.url : '';
+    }
+  } catch (e) {
+    console.warn('[genSceneImage] 获取照片列表失败：', e.message);
+  }
+
   sc._img_status = 'run';
+  sc._img_loaded = false;
   renderScenes();
   setPill('MV05', 'active');
   try {
-    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, {});
+    const payload = {};
+    if (reference_photo_url) {
+      payload.reference_photo_url = reference_photo_url;
+    }
+    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, payload);
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
+    sc._img_loaded = true;
   } catch (e) {
     sc._img_status = 'err';
     toast('图片生成失败：' + e.message);
@@ -220,6 +264,7 @@ async function genSceneVideo(idx) {
       sc._vid_status  = 'ok';
       sc._vid_poll    = null;
       sc._vid_task_id = null;
+      sc._vid_loaded  = true;
       toast(`分镜 ${idx + 1} 视频（缓存）已就绪`);
       renderScenes();
       return;
@@ -289,6 +334,7 @@ function startSceneVideoPoll(idx, taskId, taskSource) {
         sc._vid_poll   = null;
         sc._vid_url    = r.url;
         sc._vid_status = 'done';
+        sc._vid_loaded = true;
         renderScenes();
       } else if (r.status === 'failed') {
         clearInterval(sc._vid_poll);
@@ -344,6 +390,39 @@ function updateMV06Progress(stepKey) {
   const label = $('mv06ProgressLabel');
   if (fill) fill.style.width = pct + '%';
   if (label && info) label.textContent = info.label;
+}
+
+// ── 展示最终视频（带下载 + 重新生成按钮）─────
+// loadNow=true: 点击"合成"生成的，立即加载; loadNow=false: 刷新页面恢复，不自动加载
+function showFinalVideo(url, loadNow = true) {
+  hide('phaseMV06Progress');
+  renderMV06Steps('done');
+  updateMV06Progress('done');
+  if (!url) {
+    $('finalOutput').innerHTML = `<p style="color:var(--red);">视频 URL 为空，请检查后端状态。</p>`;
+    show('phaseFinal');
+    return;
+  }
+  const videoTag = loadNow
+    ? `<video controls preload="none" style="width:100%;border-radius:10px;" data-src="${esc(url)}"></video>`
+    : `<div id="mv06VideoPlaceholder" style="width:100%;border-radius:10px;background:var(--surface);padding:40px;text-align:center;cursor:pointer;">
+         <div style="font-size:2rem;margin-bottom:8px;">🎬</div>
+         <div>最终影像已生成，点击播放</div>
+       </div>`;
+  $('finalOutput').innerHTML = `${videoTag}
+     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+       <a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a>
+       <button class="btn" id="btnRegenMV06">重新生成</button>
+     </div>`;
+  show('phaseFinal');
+  const regenBtn = $('btnRegenMV06');
+  if (regenBtn) regenBtn.onclick = regenerateMV06;
+  // 点击占位符 → 替换为真实 video 标签
+  const ph = $('mv06VideoPlaceholder');
+  if (ph) ph.onclick = () => {
+    ph.outerHTML = `<video controls autoplay style="width:100%;border-radius:10px;" src="${esc(url)}"></video>`;
+  };
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
 
 async function finalCut() {
@@ -415,18 +494,7 @@ async function finalCut() {
 
       if (mv06.status === 'done') {
         setPill('MV06', 'done');
-        hide('phaseMV06Progress');
-        // 最后更新一次进度到 100%
-        renderMV06Steps('done');
-        updateMV06Progress('done');
-
-        const url = r.video_url || '';
-        $('finalOutput').innerHTML = url
-          ? `<video controls style="width:100%;border-radius:10px;" src="${esc(url)}"></video>
-             <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a></div>`
-          : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(r, null, 2))}</pre>`;
-        show('phaseFinal');
-        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '');
       } else {
         // error
         setPill('MV06', '');
@@ -437,6 +505,127 @@ async function finalCut() {
         show('phaseError');
       }
       btn.disabled = false; btn.textContent = old;
+    } catch (e) {
+      console.warn('[mv06 poll] 轮询出错：', e.message);
+    }
+  }, 10_000);
+}
+
+// 重新生成 MV06（先重置，再重新运行）
+async function regenerateMV06() {
+  if (!confirm('确定要重新生成最终影像吗？当前视频将被替换。')) return;
+
+  hide('phaseFinal');
+  hide('phaseError');
+  $('finalOutput').innerHTML = '';
+  setPill('MV06', '');
+
+  // 重置按钮不可用
+  const btn = $('btnFinalCut');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '合成中...';
+
+  // 先重置 MV06 状态
+  try {
+    await apiPost(`/pipeline/reset/${state.sid}/MV06`, {});
+  } catch (e) {
+    btn.disabled = false; btn.textContent = old;
+    toast('重置失败：' + e.message);
+    return;
+  }
+
+  // 然后重新运行（finalCut 会处理按钮状态）
+  finalCut();
+}
+
+// 页面加载时恢复 MV06 状态（缓存视频 / 恢复轮询）
+async function resumeMV06() {
+  const r = await apiGet(`/pipeline/status/${state.sid}`);
+  const mv06 = r.pipeline_state && r.pipeline_state['MV06'];
+  if (!mv06) return;
+
+  if (mv06.status === 'done') {
+    // 已有缓存视频，直接展示
+    const url = r.video_url || '';
+    if (url) {
+      setPill('MV06', 'done');
+      showFinalVideo(url, false);  // 不自动加载视频
+    }
+  } else if (mv06.status === 'running') {
+    // 后台还在跑，恢复轮询
+    finalCutPollOnly(r);
+  }
+}
+
+// 仅启动轮询（不重新提交），用于页面刷新后恢复进行中的 MV06
+function finalCutPollOnly(initData) {
+  if (mv06_poll) { clearInterval(mv06_poll); mv06_poll = null; }
+
+  setPill('MV06', 'active');
+  hide('phaseFinal');
+  hide('phaseError');
+  show('phaseMV06Progress');
+
+  const MAX_POLLS = 180;
+  let pollCount = 0;
+  let lastStep = '';
+
+  // 用初始数据更新一次 UI
+  const mv06 = initData.pipeline_state && initData.pipeline_state['MV06'];
+  if (mv06 && mv06.step) {
+    lastStep = mv06.step;
+    renderMV06Steps(lastStep);
+    updateMV06Progress(lastStep);
+    if (mv06.label) $('mv06ProgressLabel').textContent = mv06.label;
+  }
+
+  mv06_poll = setInterval(async () => {
+    pollCount++;
+    if (pollCount > MAX_POLLS) {
+      clearInterval(mv06_poll); mv06_poll = null;
+      setPill('MV06', '');
+      hide('phaseMV06Progress');
+      $('finalOutput').innerHTML = '';
+      $('errorOutput').textContent = '合成超时（30 分钟未完成），请刷新后重试';
+      show('phaseError');
+      const btn2 = $('btnFinalCut');
+      btn2.disabled = false; btn2.textContent = '合成最终影像';
+      return;
+    }
+
+    try {
+      const r = await apiGet(`/pipeline/status/${state.sid}`);
+      const mv06 = r.pipeline_state && r.pipeline_state['MV06'];
+      if (!mv06 || mv06.status === 'running') {
+        const stepKey = mv06 && mv06.step ? mv06.step : 'running';
+        if (stepKey !== lastStep) {
+          lastStep = stepKey;
+          renderMV06Steps(stepKey);
+          updateMV06Progress(stepKey);
+        } else {
+          const label = mv06 && mv06.label ? mv06.label : '合成中…';
+          $('mv06ProgressLabel').textContent = label + `（第 ${Math.ceil(pollCount * 10 / 60)} 分钟）`;
+        }
+        return;
+      }
+
+      clearInterval(mv06_poll); mv06_poll = null;
+
+      if (mv06.status === 'done') {
+        setPill('MV06', 'done');
+        showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '');
+        const btnD = $('btnFinalCut');
+        btnD.disabled = false; btnD.textContent = '重新生成';
+      } else {
+        setPill('MV06', '');
+        hide('phaseMV06Progress');
+        $('finalOutput').innerHTML = '';
+        const err = r.error_detail || mv06.error || '未知错误';
+        $('errorOutput').textContent = err;
+        show('phaseError');
+        const btnE = $('btnFinalCut');
+        btnE.disabled = false; btnE.textContent = '合成最终影像';
+      }
     } catch (e) {
       console.warn('[mv06 poll] 轮询出错：', e.message);
     }
@@ -457,29 +646,50 @@ async function bootstrap() {
   } catch {
     $('charSummary').innerHTML = `<div class="text-muted" style="color:var(--red);">未找到角色档案，请先在「方案确认台」完成前期流程。</div>`;
   }
-  // 2. 已有 MV04 则直接展示
+  // 2. 已有 MV04 则直接展示（record 模式下跳过，始终显示"生成分镜"按钮）
+  let cacheMode = '';
   try {
-    const r = await apiGet(`/pipeline/scenes/${state.sid}`);
-    if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
-      state.scenes = r.scenes;
-      setPill('MV04', 'done');
-      hide('phaseGenScenes');
-      show('phaseScenes');
-      renderScenes();
-      // 恢复未完成视频的分镜轮询
-      state.scenes.forEach((sc, i) => {
-        if (sc._video_task_id && !sc._vid_url) {
-          resumeSceneVideoPoll(i);
-        }
-      });
-    }
-  } catch { /* 没生成过则保持初始 UI */ }
+    const statusR = await apiGet(`/pipeline/status/${state.sid}`);
+    cacheMode = statusR.cache_mode || '';
+  } catch { /* 忽略 */ }
+
+  if (cacheMode !== 'record') {
+    try {
+      const r = await apiGet(`/pipeline/scenes/${state.sid}`);
+      if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
+        state.scenes = r.scenes;
+        setPill('MV04', 'done');
+        hide('phaseGenScenes');
+        show('phaseScenes');
+        renderScenes();
+        // 恢复未完成视频的分镜轮询
+        state.scenes.forEach((sc, i) => {
+          if (sc._video_task_id && !sc._vid_url) {
+            resumeSceneVideoPoll(i);
+          }
+        });
+      }
+    } catch { /* 没生成过则保持初始 UI */ }
+  }
+  // 3. 恢复 MV06 状态（缓存视频 / 恢复轮询）
+  try {
+    await resumeMV06();
+  } catch { /* 没有 MV06 数据则忽略 */ }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   $('btnGenScenes').onclick = genScenes;
   $('btnFinalCut').onclick  = finalCut;
+
+  // 视频懒加载：点击播放器时才开始加载
+  document.addEventListener('click', e => {
+    const vid = e.target.closest('video[data-src]');
+    if (vid && !vid.src) {
+      vid.src = vid.dataset.src;
+      vid.load();
+    }
+  });
 });
 
 // 页面关闭时清理轮询

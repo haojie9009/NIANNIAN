@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 
 from services import service_manager as sm
 from services import session_store
+from services.llm_client import _CACHE_MODE
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -38,6 +39,7 @@ def status(sid: str) -> Dict[str, Any]:
         "pipeline_state": s["pipeline_state"],
         "gate_status":    s["gate"]["gate_status"],
         "mv_outputs":     list(s["mv_outputs"].keys()),
+        "cache_mode":     _CACHE_MODE,
     }
     # 附加 MV06 结果（如果有）
     if "mv06_result" in s:
@@ -98,13 +100,14 @@ def run_all(sid: str) -> Dict[str, Any]:
 
 
 @router.post("/scene/image/{sid}/{idx}")
-def scene_image(sid: str, idx: int) -> Dict[str, Any]:
+def scene_image(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
     """为单个分镜生成首帧图片（返回 data URL）"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    return sm.gen_scene_image(sid, idx)
+    reference_photo_url = (payload or {}).get("reference_photo_url", "")
+    return sm.gen_scene_image(sid, idx, reference_photo_url)
 
 
 @router.get("/characters/{sid}")

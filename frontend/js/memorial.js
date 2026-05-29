@@ -89,6 +89,22 @@ async function gotoStep3() {
     toast('请填写家庭回忆与生平故事（至少 20 字）'); return;
   }
   state.form = { ...state.form, ...f };
+
+  // 同步所有照片的 subject 和 period_label 到后端
+  try {
+    const cards = document.querySelectorAll('#uploadList .upload-card[data-url]');
+    for (const card of cards) {
+      const fd = new FormData();
+      fd.append('session_id', getSessionId());
+      fd.append('asset_url', card.dataset.url);
+      fd.append('subject', card.dataset.subject || 'deceased');
+      fd.append('period_label', card.dataset.period || '');
+      await apiUpload('/assets/update-meta', fd);
+    }
+  } catch (e) {
+    console.warn('[gotoStep3] update-meta failed:', e.message);
+  }
+
   try {
     const res = await apiPost('/intake/submit', {
       session_id: getSessionId(),
@@ -195,22 +211,130 @@ async function handleUpload(files) {
   const sid = getSessionId();
   if (!sid) { toast('请先填写基本信息'); return; }
   const list = document.getElementById('uploadList');
+
   for (const f of files) {
+    const isImage = f.type.startsWith('image/');
+    const isVideo = f.type.startsWith('video/');
+    if (!isImage && !isVideo) continue;
+
+    // 创建卡片容器
+    const card = document.createElement('div');
+    card.className = 'upload-card';
+
+    // 预览
+    const thumb = document.createElement(isImage ? 'img' : 'div');
+    if (isImage) {
+      thumb.className = 'upload-thumb';
+      thumb.src = URL.createObjectURL(f);
+    } else {
+      thumb.className = 'upload-thumb video-thumb';
+      thumb.textContent = '▶ ' + esc(f.name.slice(0, 10));
+    }
+    card.appendChild(thumb);
+
+    // 上传中状态
+    const status = document.createElement('div');
+    status.className = 'upload-card-status';
+    status.textContent = '上传中...';
+    card.appendChild(status);
+
+    list.appendChild(card);
+
+    // 上传文件
     const fd = new FormData();
     fd.append('session_id', sid);
     fd.append('period', 'default');
+    fd.append('subject', 'deceased');
+    fd.append('period_label', '');
     fd.append('file', f);
+
     try {
       const res = await apiUpload('/assets/upload', fd);
-      if (f.type.startsWith('image/')) {
-        const url = URL.createObjectURL(f);
-        list.insertAdjacentHTML('beforeend', `<img class="upload-thumb" src="${url}" alt="">`);
-      } else {
-        list.insertAdjacentHTML('beforeend', `<div class="upload-thumb" style="display:flex;align-items:center;justify-content:center;background:var(--surf3);font-size:.7rem;color:var(--muted-l);">${esc(f.name.slice(0, 8))}</div>`);
+      const asset = res.asset;
+
+      status.textContent = '已上传 ✓';
+
+      // 仅图片显示选择器
+      if (isImage) {
+        const selectors = document.createElement('div');
+        selectors.className = 'upload-card-selectors';
+
+        const subjectSel = document.createElement('select');
+        subjectSel.className = 'photo-select-subject';
+        subjectSel.innerHTML = `
+          <option value="deceased" ${asset.subject === 'deceased' ? 'selected' : ''}>逝者本人</option>
+          <option value="family" ${asset.subject === 'family' ? 'selected' : ''}>家属/亲友</option>
+          <option value="group" ${asset.subject === 'group' ? 'selected' : ''}>合照/多人</option>
+          <option value="other" ${asset.subject === 'other' ? 'selected' : ''}>其他</option>
+        `;
+
+        const periodSel = document.createElement('select');
+        periodSel.className = 'photo-select-period';
+        periodSel.innerHTML = `
+          <option value="" ${!asset.period_label ? 'selected' : ''}>时期不确定</option>
+          <option value="青年" ${asset.period_label === '青年' ? 'selected' : ''}>青年时期</option>
+          <option value="中年" ${asset.period_label === '中年' ? 'selected' : ''}>中年时期</option>
+          <option value="老年" ${asset.period_label === '老年' ? 'selected' : ''}>老年时期</option>
+        `;
+
+        // 修改选择时，更新后端记录
+        async function updateAssetMeta() {
+          card.dataset.subject = subjectSel.value;
+          card.dataset.period = periodSel.value;
+          card.dataset.url = asset.url;
+          try {
+            const fd2 = new FormData();
+            fd2.append('session_id', sid);
+            fd2.append('asset_url', asset.url);
+            fd2.append('subject', subjectSel.value);
+            fd2.append('period_label', periodSel.value);
+            await apiUpload('/assets/update-meta', fd2);
+          } catch (e) {
+            console.warn('[upload] update-meta failed:', e.message);
+          }
+        }
+        subjectSel.onchange = updateAssetMeta;
+        periodSel.onchange = updateAssetMeta;
+
+        selectors.appendChild(subjectSel);
+        selectors.appendChild(periodSel);
+        card.appendChild(selectors);
+
+        card.dataset.subject = asset.subject || 'deceased';
+        card.dataset.period = asset.period_label || '';
+        card.dataset.url = asset.url;
+
+        // 删除按钮
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'upload-card-delete';
+        deleteBtn.innerHTML = '&times;';
+        deleteBtn.title = '删除此文件';
+        deleteBtn.onclick = () => handleDeleteCard(card, asset.url, sid);
+        card.appendChild(deleteBtn);
       }
-    } catch (e) { toast('上传失败：' + e.message); }
+    } catch (e) {
+      status.textContent = '上传失败';
+      status.style.color = 'var(--red)';
+      toast('上传失败：' + e.message);
+    }
   }
   toast('上传完成');
+}
+
+// ───── 删除资产 ─────
+async function handleDeleteCard(card, assetUrl, sid) {
+  const filename = assetUrl.split('/').pop();
+  if (!confirm(`确定要删除文件「${filename}」吗？`)) return;
+  try {
+    const fd = new FormData();
+    fd.append('session_id', sid);
+    fd.append('asset_url', assetUrl);
+    await apiUpload('/assets/delete', fd);
+    card.remove();
+    toast('已删除');
+  } catch (e) {
+    toast('删除失败：' + e.message);
+  }
 }
 
 // ───── 启动时：尝试从已有 session 恢复 ─────

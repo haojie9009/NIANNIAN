@@ -672,7 +672,66 @@ def get_characters(sid: str) -> Dict[str, Any]:
     return {"main": main_role, "supporting": supporting}
 
 
-def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
+def _select_reference_photo(s: dict, scene: dict, scene_idx: int) -> Optional[str]:
+    """根据分镜内容和场景时期，从用户上传的照片中选择最合适的一张作为参考。
+
+    优先级：
+    1. 分镜中明确指定的照片（通过 scene["_reference_photo"] 由前端指定）
+    2. 根据分镜时期自动匹配（如"年轻时"→ period_label="青年" 的照片）
+    3. subject="deceased" 的最新张照片（按文件修改时间）
+    4. 任意照片（如果没有逝者照片，按文件修改时间）
+    """
+    from pathlib import Path
+
+    assets = s.get("assets", [])
+    # 只取图片，不包含视频
+    image_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+    photos = [a for a in assets if a.get("filename", "").lower().endswith(image_exts)]
+
+    if not photos:
+        return None
+
+    def get_mtime(photo: dict) -> float:
+        """获取照片文件的修改时间，文件不存在则返回 0"""
+        fpath = UPLOADS_DIR / photo.get("saved_as", "")
+        return fpath.stat().st_mtime if fpath.exists() else 0
+
+    # 按修改时间倒序（最新的在前）
+    photos = sorted(photos, key=get_mtime, reverse=True)
+
+    # 1. 前端指定（URL 匹配 saved_as）
+    specified = scene.get("_reference_photo")
+    if specified:
+        match = next((p for p in photos if p.get("url") == specified), None)
+        if match:
+            return match["saved_as"]
+
+    # 2. 时期匹配（根据分镜描述中的关键词匹配时期）
+    scene_desc = (scene.get("description") or scene.get("visual") or "").lower()
+    period_keywords = {
+        "青年": ["青年", "年轻", "大学", "青春", "插队", "知青"],
+        "中年": ["中年", "工作", "车间", "技术", "工程师"],
+        "老年": ["老年", "退休", "晚年", "白发"],
+    }
+
+    for label, keywords in period_keywords.items():
+        if any(kw in scene_desc for kw in keywords):
+            match = next(
+                (p for p in photos if p.get("period_label") == label and p.get("subject") == "deceased"),
+                None,
+            )
+            if match:
+                return match["saved_as"]
+
+    # 3. 默认：逝者的最新��张照片（已按修改时间排序）
+    deceased_photo = next((p for p in photos if p.get("subject") == "deceased"), None)
+    if deceased_photo:
+        return deceased_photo["saved_as"]
+
+    return None
+
+
+def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> Dict[str, Any]:
     """为单个分镜生成图片。写入本地磁盘，返回可访问的 URL。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
@@ -710,7 +769,16 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_302(image_prompt)
+    # ── 选择参考照片 ──
+    ref_saved_as = reference_photo_url or _select_reference_photo(s, scene, scene_idx)
+    reference_b64 = None
+    if ref_saved_as:
+        import base64 as _b64
+        asset_path = UPLOADS_DIR / ref_saved_as
+        if asset_path.exists():
+            reference_b64 = _b64.b64encode(asset_path.read_bytes()).decode()
+
+    b64, err = generate_image_302(image_prompt, reference_b64=reference_b64)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
@@ -718,6 +786,7 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     local_url = _save_generated_image(b64, sid, scene_idx)
     scene["_image_url"] = local_url
     scene["_image_prompt"] = image_prompt
+    scene["_reference_photo"] = ref_saved_as or ""
     session_store.update(sid)
     return {"url": local_url}
 
@@ -1088,9 +1157,10 @@ def _extend_video(clip, target_duration):
     from moviepy.config import FFMPEG_BINARY
 
     speed = clip.duration / target_duration
+
     if speed >= 0.95:
         return clip  # 差异很小，直接使用
-
+    
     src = clip.filename
     base = Path(src).stem
     parent = Path(src).parent
@@ -1112,8 +1182,7 @@ def _extend_video(clip, target_duration):
         new_clip = new_clip.subclipped(0, target_duration)
     return new_clip
 
-
-
+ 
 def assemble_final_video(s: dict) -> Dict[str, Any]:
     """拼接最终视频：视频/图片 + 旁白 + BGM + 字幕。
     返回 {"ok": bool, "video_url": str, "duration_sec": float, "error": str}
