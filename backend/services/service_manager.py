@@ -839,6 +839,11 @@ def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dic
       完成   → {"status": "done", "url": "/api/outputs/..."}
       失败   → {"status": "failed", "message": ...}
     """
+    # 先检查本地是否已有缓存（避免重复调 302.ai）
+    cached = get_cached_scene_video(sid, scene_idx)
+    if cached:
+        return {"status": "done", "url": cached, "cached": True}
+
     # 单次轮询（max_wait=0 → 只查一次状态）
     if source == "302ai":
         res = generate_video_302ai_i2v(
@@ -1108,6 +1113,7 @@ def _extend_video(clip, target_duration):
     return new_clip
 
 
+
 def assemble_final_video(s: dict) -> Dict[str, Any]:
     """拼接最终视频：视频/图片 + 旁白 + BGM + 字幕。
     返回 {"ok": bool, "video_url": str, "duration_sec": float, "error": str}
@@ -1183,22 +1189,22 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
 
             # 获取视频/图片片段
             if entry.get("video_mode") == "ken_burns":
-                vid_clip = _make_ken_burns_clip(entry["image_path"], 5.0)
-                vid_dur = vid_clip.duration
+                vid_dur = 5.0  # Ken Burns 默认时长
+                target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
+                target_dur = max(target_dur, 1.0)
+                vid_clip = _make_ken_burns_clip(entry["image_path"], target_dur)
+                video_w, video_h = vid_clip.size
             else:
                 vid_clip = VideoFileClip(entry["video_path"]).without_audio()
                 vid_dur = vid_clip.duration
+                target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
+                target_dur = max(target_dur, 1.0)
+                video_w, video_h = vid_clip.size
 
-            # target = max(视频时长, 音频时长)
-            target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
-            target_dur = max(target_dur, 1.0)
-
-            video_w, video_h = vid_clip.size
             mode_str = "Ken Burns" if entry.get("video_mode") == "ken_burns" else "视频"
 
             if entry.get("video_mode") == "ken_burns":
-                vid_clip.close()
-                vid_clip = _make_ken_burns_clip(entry["image_path"], target_dur)
+                pass  # 已经用 target_dur 创建，无需二次渲染
             elif vid_dur < target_dur - 0.1:
                 # 视频短于目标 → 补帧延长
                 vid_clip = _extend_video(vid_clip, target_dur)
@@ -1291,7 +1297,8 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
         out_path = FINAL_DIR / out_filename
         svc_logger.info("[assemble] 渲染输出 → %s", out_path)
         final_video.write_videofile(
-            str(out_path), codec="libx264", audio_codec="aac", logger=None, fps=24
+            str(out_path), codec="libx264", audio_codec="aac",
+            logger=None, fps=24, preset="ultrafast", threads=4
         )
         final_video.close()
 
@@ -1401,21 +1408,43 @@ def _run_mv06_work(sid: str) -> None:
         session_store.update(sid)
         svc_logger.info("[mv06.pre] MV05 gate auto-approved sid=%s", sid)
 
-        # 2. TTS 合成
-        _set_progress("tts_running", "TTS语音合成中…")
+        # 2. TTS + BGM 并行执行
+        _set_progress("tts_bgm_running", "TTS语音合成 + BGM背景音乐匹配中…")
         scenes = _get_scenes_from_mv04(s["mv_outputs"].get("MV04"))
-        tts_segments = generate_tts_segments(sid, scenes)
         s.setdefault("audio", {})
+
+        import concurrent.futures
+        _tts_exc: list = []
+        _bgm_exc: list = []
+
+        def _run_tts():
+            try:
+                return generate_tts_segments(sid, scenes)
+            except Exception as e:
+                _tts_exc.append(e)
+                return []
+
+        def _run_bgm():
+            try:
+                return generate_bgm(sid)
+            except Exception as e:
+                _bgm_exc.append(e)
+                return {}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            tts_fut = pool.submit(_run_tts)
+            bgm_fut = pool.submit(_run_bgm)
+            tts_segments = tts_fut.result()
+            bgm_result = bgm_fut.result()
+
         s["audio"]["tts_segments"] = tts_segments
         if tts_segments:
             session_store.update(sid)
             svc_logger.info("[mv06.pre] TTS synthesized %d segments sid=%s", len(tts_segments), sid)
-        _set_progress("tts_done", "已完成TTS语音合成")
 
-        # 3. BGM 匹配
-        _set_progress("bgm_running", "BGM背景音乐匹配中…")
-        bgm_result = generate_bgm(sid)
-        _set_progress("bgm_done", "已完成BGM背景音乐匹配")
+        if _bgm_exc:
+            svc_logger.warning("[mv06.pre] BGM 生成失败: %s", _bgm_exc[0])
+        _set_progress("tts_bgm_done", "已完成TTS语音合成 + BGM背景音乐匹配")
 
         # 4. 视频拼接
         _set_progress("video_running", "视频合成中…")
