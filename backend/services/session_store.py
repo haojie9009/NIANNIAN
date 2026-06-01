@@ -178,6 +178,32 @@ def gc() -> int:
 
     return removed
 
+def recover_stale_mv06() -> int:
+    """启动时修复残留的 running 状态 MV06 任务。
+
+    daemon 线程在进程退出时被杀死，导致 MV06 后台任务中断。
+    启动时扫描所有 pipeline_state.MV06.status == "running" 的 session，
+    标记为 stale，提示用户重新提交。
+    """
+    count = 0
+    with _LOCK:
+        for sid, s in _SESSIONS.items():
+            mv06 = s.get("pipeline_state", {}).get("MV06", {})
+            if mv06.get("status") == "running":
+                mv06["status"] = "error"
+                mv06["step"] = "stale"
+                mv06["label"] = "任务中断（服务重启）"
+                mv06["error"] = "MV06 任务因服务重启而中断，请重新点击「合成最终影像」"
+                s.setdefault("mv06_result", {})
+                s["mv06_result"]["ok"] = False
+                s["mv06_result"]["error"] = mv06["error"]
+                s["updated_at"] = time.time()
+                _save(sid)
+                count += 1
+    if count:
+        svc_logger.warning("[session_store] recover_stale_mv06: 修复了 %d 个残留 running 状态", count)
+    return count
+
 
 def list_ids() -> list:
     with _LOCK:

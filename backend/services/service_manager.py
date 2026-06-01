@@ -579,11 +579,21 @@ def run_pipeline_chain(sid: str) -> Dict[str, Any]:
 
 # ── 生成资源本地持久化 ─────────────────────────────────────────────────
 def _save_generated_image(b64: str, sid: str, scene_idx: int) -> str:
-    """将 base64 图片写入磁盘，返回本地 URL。"""
+    """将 base64 图片写入磁盘，返回本地 URL。同时递增 _image_version。"""
     import base64 as _b64
     filename = f"{sid}_scene{scene_idx}.png"
     path = GEN_IMAGES_DIR / filename
     path.write_bytes(_b64.b64decode(b64))
+    # 递增图片版本号，用于视频缓存校验
+    try:
+        s = session_store.require(sid)
+        mv04 = s["mv_outputs"].get("MV04")
+        scenes = _get_scenes_from_mv04(mv04)
+        if 0 <= scene_idx < len(scenes):
+            scenes[scene_idx]["_image_version"] = scenes[scene_idx].get("_image_version", 0) + 1
+        session_store.update(sid)
+    except Exception:
+        pass
     return f"/api/outputs/generated/images/{filename}"
 
 
@@ -731,8 +741,12 @@ def _select_reference_photo(s: dict, scene: dict, scene_idx: int) -> Optional[st
     return None
 
 
-def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> Dict[str, Any]:
-    """为单个分镜生成图片。写入本地磁盘，返回可访问的 URL。"""
+def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "", force: bool = False) -> Dict[str, Any]:
+    """为单个分镜生成图片。写入本地磁盘，返回可访问的 URL。
+
+    force=False（首次"生成图片"）：入参一致时返回缓存
+    force=True（"重新生成图片"）：始终重新调用 API
+    """
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -742,7 +756,7 @@ def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> 
     scene = scenes[scene_idx]
 
     # ── Playback 模式：命中本地图片缓存则跳过 API ──
-    if _CACHE_MODE == "playback":
+    if _CACHE_MODE == "playback" and not force:
         cached_url = scene.get("_image_url", "")
         # 内存中没有 _image_url → 按约定文件名回退检查磁盘
         if not cached_url:
@@ -758,10 +772,9 @@ def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> 
                 cached_path = Path(cached_url)
             if cached_path.is_file():
                 return {"url": cached_url, "cached": True}
-
-    # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
+        # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
     try:
-        prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None)
+        prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None, use_cache=not force)
         image_prompt = prompts.get("image_prompt") or scene.get("prompt_start") or scene.get("description") or ""
     except Exception:
         image_prompt = scene.get("prompt_start") or scene.get("description") or scene.get("visual") or str(scene)
@@ -769,8 +782,19 @@ def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> 
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    # ── 选择参考照片 ──
     ref_saved_as = reference_photo_url or _select_reference_photo(s, scene, scene_idx)
+
+    # ── 入参缓存检查：非 force 模式下，入参一致且已有图片则直接返回 ──
+    if not force:
+        cached_url = scene.get("_image_url", "")
+        cached_prompt = scene.get("_image_prompt", "")
+        cached_ref = scene.get("_reference_photo", "")
+        if cached_url and cached_prompt == image_prompt and cached_ref == ref_saved_as:
+            img_path = GEN_IMAGES_DIR / Path(cached_url).name if cached_url.startswith("/api/outputs/generated/images/") else Path(cached_url)
+            if img_path.is_file():
+                return {"url": cached_url, "cached": True}
+
+    # ── 选择参考照片 ──
     reference_b64 = None
     if ref_saved_as:
         import base64 as _b64
@@ -791,8 +815,12 @@ def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "") -> 
     return {"url": local_url}
 
 
-def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, Any]:
-    """为单个分镜生成视频。下载至本地磁盘，返回可访问的 URL。"""
+def gen_scene_video(sid: str, scene_idx: int, image_url: str = "", force: bool = False) -> Dict[str, Any]:
+    """为单个分镜生成视频。下载至本地磁盘，返回可访问的 URL。
+
+    force=False（首次"生成视频"）：入参一致时返回缓存
+    force=True（"重新生成视频"）：始终重新调用 API
+    """
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -801,8 +829,8 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
-    # ── Playback 模式：命中本地视频缓存则跳过 API ──
-    if _CACHE_MODE == "playback":
+    # ── Playback 模式：非 force 时命中本地视频缓存则跳过 API ──
+    if _CACHE_MODE == "playback" and not force:
         cached_url = scene.get("_video_url", "")
         svc_logger.debug("[video playback] cached_url=%s", cached_url)
         # 内存中没有 _video_url → 按约定文件名回退检查磁盘
@@ -822,6 +850,37 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     image_url = image_url or scene.get("_image_url", "")
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
+
+    # ── 入参缓存检查：非 force 模式下，已有完成视频且版本一致则返回缓存 ──
+
+    if not force:
+        existing_video_url = scene.get("_video_url")
+        existing_img_ver = scene.get("_video_input_version", 0)
+        current_ver = scene.get("_image_version", 0)
+        if existing_video_url and existing_img_ver == current_ver:
+            v_path = GEN_VIDEOS_DIR / Path(existing_video_url).name if existing_video_url.startswith("/api/outputs/generated/videos/") else Path(existing_video_url)
+            if v_path.is_file():
+                return {"url": existing_video_url, "cached": True, "status": "done"}
+
+    # ── 复用 task_id：已有待处理任务且版本未变 ──
+    existing_task_id = scene.get("_video_task_id")
+    if existing_task_id and not scene.get("_video_url") and not force:
+        current_ver = scene.get("_image_version", 0)
+        existing_ver = scene.get("_video_input_version", 0)
+        if current_ver == existing_ver:
+            return {
+                "task_id": existing_task_id,
+                "source": scene.get("_video_task_source", "302ai"),
+                "status": "pending",
+                "reused": True,
+            }
+
+    # ── force 模式：清掉旧视频缓存，确保轮询走 API ──
+    if force:
+        scene.pop("_video_url", None)
+        scene.pop("_video_status", None)
+        scene.pop("_video_input_version", None)
+        session_store.update(sid)
 
     # 相对路径（/api/outputs/generated/images/xxx.png）→ 上传图床获取公网 URL
     if image_url.startswith("/api/outputs/generated/images/"):
@@ -874,6 +933,7 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     scene["_video_task_id"]     = task_id
     scene["_video_task_source"] = source
     scene["_video_status"]      = "pending"
+    scene["_video_input_version"]   = scene.get("_image_version", 0)
     session_store.update(sid)
     svc_logger.info("[video] 提交成功 task_id=%s source=%s sid=%s scene=%d", task_id, source, sid, scene_idx)
     return {"task_id": task_id, "source": source, "status": "pending"}
@@ -901,17 +961,51 @@ def get_cached_scene_video(sid: str, scene_idx: int) -> Optional[str]:
     return None
 
 
-def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dict[str, Any]:
+def recover_pending_videos(sid: str) -> None:
+    """返回分镜数据前，自动检查有 task_id 但无 video_url 的分镜，主动查询 302AI 补结果。"""
+    try:
+        s = session_store.require(sid)
+        mv04 = s["mv_outputs"].get("MV04")
+        scenes = _get_scenes_from_mv04(mv04)
+        if not scenes:
+            return
+    except Exception:
+        return
+
+    for i, sc in enumerate(scenes):
+        task_id = sc.get("_video_task_id")
+        if not task_id or sc.get("_video_url"):
+            continue  # 无任务或已有结果，跳过
+
+        source = sc.get("_video_task_source", "302ai")
+        try:
+            res = poll_scene_video(task_id, source, sid, i)
+            if res.get("status") == "done":
+                svc_logger.info("[recover] 补全视频 sid=%s scene=%d url=%s", sid, i, res["url"])
+        except Exception as e:
+            svc_logger.warning("[recover] 查询失败 sid=%s scene=%d task_id=%s err=%s", sid, i, task_id, e)
+
+
+def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int, image_url: str = "") -> Dict[str, Any]:
     """轮询视频任务状态。完成后下载到本地并更新 scene。
     返回:
       处理中 → {"status": "processing", "task_id": ...}
       完成   → {"status": "done", "url": "/api/outputs/..."}
       失败   → {"status": "failed", "message": ...}
     """
-    # 先检查本地是否已有缓存（避免重复调 302.ai）
-    cached = get_cached_scene_video(sid, scene_idx)
-    if cached:
-        return {"status": "done", "url": cached, "cached": True}
+    # 先检查 session 中是否已有完成视频（避免重复轮询同一 task_id）
+    try:
+        s = session_store.require(sid)
+        mv04 = s["mv_outputs"].get("MV04")
+        scenes = _get_scenes_from_mv04(mv04)
+        if 0 <= scene_idx < len(scenes):
+            scene = scenes[scene_idx]
+            done_url = scene.get("_video_url")
+            done_tid = scene.get("_video_task_id")
+            if done_url and done_tid == task_id:
+                return {"status": "done", "url": done_url}
+    except Exception:
+        pass
 
     # 单次轮询（max_wait=0 → 只查一次状态）
     if source == "302ai":
@@ -948,6 +1042,7 @@ def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int) -> Dic
         if 0 <= scene_idx < len(scenes):
             scenes[scene_idx]["_video_url"]    = final_url
             scenes[scene_idx]["_video_status"] = "done"
+            scenes[scene_idx]["_video_input_version"]   = scenes[scene_idx].get("_image_version", 0)
         session_store.update(sid)
     except Exception:
         pass

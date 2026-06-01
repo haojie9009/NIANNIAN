@@ -57,6 +57,11 @@ async def _lifespan(app: FastAPI):
     if removed:
         app_logger.info("[session_store] startup gc: 清理了 %d 个 session", removed)
 
+    # 修复服务重启后残留的 running 状态 MV06 任务
+    stale = session_store.recover_stale_mv06()
+    if stale:
+        app_logger.info("[session_store] recover_stale_mv06: 修复了 %d 个中断的 MV06 任务", stale)
+
     try:
         yield
     finally:
@@ -194,7 +199,7 @@ app.include_router(voice.router,    prefix="/api")
 app.include_router(audio.router,    prefix="/api")
 app.include_router(admin.router,    prefix="/api")
 
-# 生成资源静态托管（图片/视频本地持久化）
+# 生成资源静态托管零缓存（开发期：重新生成图片/视频后浏览器立即加载新版）
 _GENERATED = _BACKEND.parent / "backend" / "outputs" / "generated"
 if _GENERATED.exists():
     app.mount("/api/outputs/generated", StaticFiles(directory=str(_GENERATED)), name="generated")
@@ -202,6 +207,17 @@ if _GENERATED.exists():
 _FINAL = _BACKEND.parent / "backend" / "outputs" / "final_cuts"
 _FINAL.mkdir(parents=True, exist_ok=True)
 app.mount("/api/outputs/final_cuts", StaticFiles(directory=str(_FINAL)), name="final_cuts")
+
+# 前端 + 生成资源零缓存（开发期：修改后刷新立即生效）
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    if request.url.path.startswith("/static/") or request.url.path.startswith("/api/outputs/"):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+    return await call_next(request)
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"

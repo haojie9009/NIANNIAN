@@ -107,7 +107,8 @@ def scene_image(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(Non
     except KeyError:
         raise HTTPException(404, "session not found")
     reference_photo_url = (payload or {}).get("reference_photo_url", "")
-    return sm.gen_scene_image(sid, idx, reference_photo_url)
+    force = (payload or {}).get("force", False)
+    return sm.gen_scene_image(sid, idx, reference_photo_url, force=force)
 
 
 @router.get("/characters/{sid}")
@@ -120,6 +121,45 @@ def characters(sid: str) -> Dict[str, Any]:
     return sm.get_characters(sid)
 
 
+@router.get("/last-storyboard")
+def last_storyboard(current_sid: str = "") -> Dict[str, Any]:
+    """返回指定 session 是否有 MV04 分镜数据（只查当前 session，不跨 session 搜索）"""
+    if not current_sid:
+        return {"found": False}
+    try:
+        s = session_store.require(current_sid)
+    except KeyError:
+        return {"found": False}
+    mv04 = s["mv_outputs"].get("MV04")
+    if not mv04:
+        return {"found": False}
+    scenes = sm._get_scenes_from_mv04(mv04)
+    return {"found": True, "session_id": current_sid, "scene_count": len(scenes),
+            "deceased_name": s.get("form_data", {}).get("deceased_name", "")}
+
+
+@router.post("/import-scenes/{sid}")
+def import_scenes(sid: str, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+    """从另一个 session 导入 MV04 分镜数据到当前 session"""
+    try:
+        s = session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    source_sid = (payload or {}).get("source_sid")
+    if not source_sid:
+        return {"error": True, "message": "source_sid 必填"}
+    try:
+        src = session_store.require(source_sid)
+    except KeyError:
+        raise HTTPException(404, "源 session 不存在")
+    mv04 = src["mv_outputs"].get("MV04")
+    if not mv04:
+        return {"error": True, "message": "源 session 没有 MV04 分镜数据"}
+    s["mv_outputs"]["MV04"] = mv04
+    session_store.update(sid)
+    return {"ok": True, "scene_count": len(sm._get_scenes_from_mv04(mv04))}
+
+
 @router.get("/scenes/{sid}")
 def scenes(sid: str) -> Dict[str, Any]:
     """返回 MV04 已生成的分镜列表（含已渲染的图片/视频缓存）"""
@@ -128,6 +168,9 @@ def scenes(sid: str) -> Dict[str, Any]:
     except KeyError:
         raise HTTPException(404, "session not found")
     mv04 = s["mv_outputs"].get("MV04")
+    # 自动补全页面关闭期间完成的视频任务
+    if mv04:
+        sm.recover_pending_videos(sid)
     return {"scenes": sm._get_scenes_from_mv04(mv04), "ready": mv04 is not None}
 
 
@@ -139,11 +182,12 @@ def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(Non
     except KeyError:
         raise HTTPException(404, "session not found")
     image_url = (payload or {}).get("image_url", "")
-    return sm.gen_scene_video(sid, idx, image_url)
+    force = bool((payload or {}).get("force"))
+    return sm.gen_scene_video(sid, idx, image_url, force=force)
 
 
 @router.get("/scene/video/status/{sid}/{idx}/{task_id}")
-def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai") -> Dict[str, Any]:
+def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai", image_url: str = "") -> Dict[str, Any]:
     """轮询视频任务状态。完成后自动下载到本地并返回 URL。"""
     try:
         session_store.require(sid)
@@ -154,5 +198,5 @@ def scene_video_status(sid: str, idx: int, task_id: str, source: str = "302ai") 
     if not task_id or task_id == "undefined":
         return {"status": "failed", "message": "task_id 无效且无本地缓存"}
 
-    return sm.poll_scene_video(task_id, source, sid, idx)
+    return sm.poll_scene_video(task_id, source, sid, idx, image_url)
 

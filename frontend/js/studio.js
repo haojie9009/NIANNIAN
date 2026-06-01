@@ -87,8 +87,8 @@ function renderScenes() {
 
     let vidHtml;
     if (sc._vid_url && sc._vid_loaded) {
-      vidHtml = `<div class="media-slot has-media">
-           <video controls preload="none" data-src="${esc(sc._vid_url)}"></video>
+      vidHtml = `<div class="media-slot has-media" id="vidSlot${i}">
+           <video controls preload="none" data-src="${esc(sc._vid_url)}" onerror="this.style.display='none';var m=this.parentElement.querySelector('.media-cap');if(m)m.textContent='视频加载失败，请尝试下载';"></video>
            <div class="media-cap" style="margin-top:6px;">
              <a class="btn btn-sm" href="${esc(sc._vid_url)}" download="scene-${String(i + 1).padStart(2, '0')}.mp4" target="_blank">下载视频</a>
            </div>
@@ -122,8 +122,8 @@ function renderScenes() {
     const act = btn.dataset.act;
     btn.onclick = () => {
       const idx = +btn.dataset.idx;
-      if (act === 'img') genSceneImage(idx);
-      else if (act === 'vid') genSceneVideo(idx);
+      if (act === 'img') genSceneImage(idx, state.scenes[idx]._img_url ? true : false);
+      else if (act === 'vid') genSceneVideo(idx, !!state.scenes[idx]._vid_url);
       else if (act === 'viewimg') {
         state.scenes[idx]._img_loaded = true;
         renderScenes();
@@ -194,7 +194,7 @@ async function genScenes() {
 }
 
 // ───── 单镜图片生成 ─────
-async function genSceneImage(idx) {
+async function genSceneImage(idx, force = false) {
   const sc = state.scenes[idx];
   if (!sc) return;
 
@@ -219,7 +219,7 @@ async function genSceneImage(idx) {
   renderScenes();
   setPill('MV05', 'active');
   try {
-    const payload = {};
+    const payload = { force };
     if (reference_photo_url) {
       payload.reference_photo_url = reference_photo_url;
     }
@@ -238,40 +238,49 @@ async function genSceneImage(idx) {
 }
 
 // ───── 单镜视频生成（异步提交 + 轮询）─────
-async function genSceneVideo(idx) {
+async function genSceneVideo(idx, force = false) {
   const sc = state.scenes[idx];
   if (!sc || !sc._img_url) { toast('请先生成图片'); return; }
 
-  if (sc._vid_poll) {
-    clearInterval(sc._vid_poll);
-    sc._vid_poll = null;
-  }
-
   sc._vid_status = 'run';
   sc._vid_url    = null;
+  sc._vid_loaded = false;
   renderScenes();
 
   let taskId, taskSource;
   try {
     const res = await apiPost(`/pipeline/scene/video/${state.sid}/${idx}`, {
       image_url: sc._img_url,
+      force: force,
     });
     if (res.error) throw new Error(res.message || '视频提交失败');
 
     // ── Playback 模式：视频已缓存，直接完成 ──
     if (res.cached && res.url) {
       sc._vid_url     = res.url;
-      sc._vid_status  = 'ok';
+      sc._vid_status  = 'done';
       sc._vid_poll    = null;
-      sc._vid_task_id = null;
+      sc._video_task_id = null;
       sc._vid_loaded  = true;
       toast(`分镜 ${idx + 1} 视频（缓存）已就绪`);
       renderScenes();
       return;
     }
 
-    taskId     = res.task_id;
-    taskSource = res.source || '';
+    // ── 复用已有 task_id（参考图未变，任务仍在进行中） ──
+    if (res.reused) {
+      taskId     = res.task_id;
+      taskSource = res.source || '';
+      sc._vid_status = 'run';
+    } else {
+      // 新任务：清掉旧状态
+      if (sc._vid_poll) { clearInterval(sc._vid_poll); sc._vid_poll = null; }
+      sc._vid_status = 'run';
+      sc._vid_url    = null;
+      taskId     = res.task_id;
+      taskSource = res.source || '';
+      renderScenes();
+    }
   } catch (e) {
     sc._vid_status = 'err';
     toast('视频提交失败：' + e.message);
@@ -279,8 +288,8 @@ async function genSceneVideo(idx) {
     return;
   }
 
-  sc._vid_task_id     = taskId;
-  sc._vid_task_source = taskSource;
+  sc._video_task_id     = taskId;
+  sc._video_task_source = taskSource;
 
   startSceneVideoPoll(idx, taskId, taskSource);
 }
@@ -292,9 +301,7 @@ function resumeSceneVideoPoll(idx) {
   if (sc._vid_url) return; // 已有视频，不需要轮询
 
   sc._vid_status = 'run';
-  sc._vid_task_id = sc._video_task_id;
-  sc._vid_task_source = sc._video_task_source || '';
-  startSceneVideoPoll(idx, sc._video_task_id, sc._vid_task_source);
+  startSceneVideoPoll(idx, sc._video_task_id, sc._video_task_source);
 }
 
 // 核心轮询逻辑（genSceneVideo 和 resumeSceneVideoPoll 共用）
@@ -327,7 +334,7 @@ function startSceneVideoPoll(idx, taskId, taskSource) {
 
     try {
       const r = await apiGet(
-        `/pipeline/scene/video/status/${state.sid}/${idx}/${taskId}?source=${encodeURIComponent(taskSource)}`
+        `/pipeline/scene/video/status/${state.sid}/${idx}/${taskId}?source=${encodeURIComponent(taskSource)}&image_url=${encodeURIComponent(sc._img_url || '')}`
       );
       if (r.status === 'done') {
         clearInterval(sc._vid_poll);
@@ -657,6 +664,13 @@ async function bootstrap() {
     try {
       const r = await apiGet(`/pipeline/scenes/${state.sid}`);
       if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
+        // 后端字段名 → 前端短名映射，保持内存一致
+        r.scenes.forEach(sc => {
+          if (sc._image_url)    { sc._img_url     = sc._image_url; }
+          if (sc._video_url)    { sc._vid_url     = sc._video_url; }
+          if (sc._video_status) { sc._vid_status  = sc._video_status; }
+          if (sc._video_url)    { sc._vid_loaded  = true; }
+        });
         state.scenes = r.scenes;
         setPill('MV04', 'done');
         hide('phaseGenScenes');
@@ -671,23 +685,63 @@ async function bootstrap() {
       }
     } catch { /* 没生成过则保持初始 UI */ }
   }
+  // 未自动加载分镜时，检查当前 session 是否有 MV04，有则显示"加载上次分镜"按钮
+  if (!state.scenes || !state.scenes.length) {
+    try {
+      const last = await apiGet(`/pipeline/last-storyboard?current_sid=${state.sid}`);
+      if (last.found) show('btnLoadLastScenes');
+    } catch { /* 忽略 */ }
+  }
   // 3. 恢复 MV06 状态（缓存视频 / 恢复轮询）
   try {
     await resumeMV06();
   } catch { /* 没有 MV06 数据则忽略 */ }
 }
 
+// ───── 加载上次分镜（当前 session）─────
+async function loadLastStoryboard() {
+  try {
+    const r = await apiGet(`/pipeline/scenes/${state.sid}`);
+    if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
+      r.scenes.forEach(sc => {
+        if (sc._image_url)    { sc._img_url     = sc._image_url; }
+        if (sc._video_url)    { sc._vid_url     = sc._video_url; }
+        if (sc._video_status) { sc._vid_status  = sc._video_status; }
+        if (sc._video_url)    { sc._vid_loaded  = true; }
+      });
+      state.scenes = r.scenes;
+      setPill('MV04', 'done');
+      hide('phaseGenScenes');
+      show('phaseScenes');
+      renderScenes();
+      // 恢复未完成视频的轮询
+      state.scenes.forEach((sc, i) => {
+        if (sc._video_task_id && !sc._vid_url) {
+          resumeSceneVideoPoll(i);
+        }
+      });
+      toast('已加载上次分镜');
+    } else {
+      toast('当前 session 无分镜数据');
+    }
+  } catch (e) {
+    toast('加载失败：' + e.message);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   $('btnGenScenes').onclick = genScenes;
+  $('btnLoadLastScenes').onclick = loadLastStoryboard;
   $('btnFinalCut').onclick  = finalCut;
 
-  // 视频懒加载：点击播放器时才开始加载
+  // 视频懒加载：点击播放器时才开始加载并播放
   document.addEventListener('click', e => {
     const vid = e.target.closest('video[data-src]');
     if (vid && !vid.src) {
       vid.src = vid.dataset.src;
       vid.load();
+      vid.play().catch(() => {}); // 自动播放，忽略浏览器策略限制
     }
   });
 });

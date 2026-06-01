@@ -150,13 +150,15 @@ class _ResponseCache:
                     caller = f"{os.path.basename(frame_info.filename)}:{frame_info.lineno} {frame_info.function}()"
                     break
             _cache_log.info(
-                "[cache] PLAYBACK 命中 | 调用方: %s | 文件: %s | 时间: %s",
+                "[cache] HIT | model=%s | 调用方: %s | 文件: %s | 时间: %s",
+                model,
                 caller,
-                path,
+                os.path.basename(path),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
             _pb_log.info(
-                "[cache] PLAYBACK 命中 | 调用方: %s | 文件: %s | 时间: %s",
+                "[cache] HIT | model=%s | 调用方: %s | 文件: %s | 时间: %s",
+                model,
                 caller,
                 os.path.basename(path),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -292,6 +294,7 @@ def call_skill(
                              {"skill": skill_name, "payload": user_payload})
         if cached is not None:
             return cached
+        _cache_log.info("[cache] MISS | model=%s | func=call_skill | skill=%s → 调用 API", TEXT_MODEL, skill_name)
 
     # MV04 分镜制作强制使用 storyboard 专属队列（gpt-4o）
     model_queue = _storyboard_model_queue() if skill_name == "MV04" else _iter_model_clients()
@@ -302,6 +305,7 @@ def call_skill(
         sys_content   = system_prompt if use_json_mode else _json_system_hint(system_prompt)
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_skill | skill=%s", model_name, skill_name)
                 kwargs: Dict[str, Any] = dict(
                     model=model_name,
                     messages=[
@@ -355,9 +359,11 @@ def call_memorial_chat(
             cached = _cache.load("chat/completions", model, {"messages": messages})
             if cached is not None:
                 return cached.get("reply", "")
+            _cache_log.info("[cache] MISS | model=%s | func=call_memorial_chat | 指定模型 → 调用 API", model)
 
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_memorial_chat", model)
                 response = PRIMARY_CLIENT.chat.completions.create(
                     model=model,
                     messages=all_msgs,
@@ -382,12 +388,13 @@ def call_memorial_chat(
             cached = _cache.load("chat/completions", _model_name, {"messages": messages})
             if cached is not None:
                 return cached.get("reply", "")
-        _pb_log.warning("[playback] 缓存未命中 | call_memorial_chat | messages: %s", json.dumps(messages, ensure_ascii=False, default=str)[:300])
+        _cache_log.info("[cache] MISS | model=%s | func=call_memorial_chat → 调用 API", TEXT_MODEL)
 
     _had_fallback = False
     for model_name, client in _iter_model_clients():
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_memorial_chat", model_name)
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=all_msgs,
@@ -418,12 +425,14 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
         cached = _cache.load("chat/completions", TEXT_MODEL, {"system": system_prompt, "user": user_content})
         if cached is not None:
             return cached.get("reply", "")
+        _cache_log.info("[cache] MISS | model=%s | func=call_freeform → 调用 API", TEXT_MODEL)
 
     last_error: Optional[str] = None
     _had_fallback = False
     for model_name, client in _iter_model_clients():
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_freeform", model_name)
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=[
@@ -456,6 +465,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
         cached = _cache.load("chat/completions", TEXT_MODEL, {"system": system_prompt, "user": user_content})
         if cached is not None:
             return cached
+        _cache_log.info("[cache] MISS | model=%s | func=call_structured → 调用 API", TEXT_MODEL)
 
     last_error: Optional[str] = None
     _had_fallback = False
@@ -464,6 +474,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
         sys_content   = system_prompt if use_json_mode else _json_system_hint(system_prompt)
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_structured", model_name)
                 kwargs: Dict[str, Any] = dict(
                     model=model_name,
                     messages=[
@@ -787,6 +798,7 @@ def build_scene_prompts(
     character_bible: Optional[Dict[str, Any]] = None,
     scene_library: Optional[List] = None,
     cast_roles: Optional[List[Dict[str, Any]]] = None,
+    use_cache: bool = True
 ) -> Dict[str, Any]:
     """
     根据分镜 + 三要素 + 电影角色表，用 LLM 同时生成：
@@ -866,7 +878,7 @@ def build_scene_prompts(
         "电影配角表（如场景涉及多人，需在prompt中标注）": cast_text,
     }
 
-    result = call_storyboard(system_prompt, json.dumps(user_payload, ensure_ascii=False))
+    result = call_storyboard(system_prompt, json.dumps(user_payload, ensure_ascii=False), use_cache=use_cache)
     if result.get("error") or not result.get("image_prompt"):
         fallback_img = scene.get("mj_prompt") or scene.get("description") or ""
         fallback_vid = scene.get("description") or ""
@@ -941,8 +953,8 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
         cached = _cache.load("chat/completions", IMAGE_REF_MODEL,
                              {"prompt": prompt, "ref_hash": ref_hash})
         if cached is not None and cached.get("b64"):
-            _cache_log.info("[cache] PLAYBACK 图片生成命中: %s", prompt[:30])
             return cached["b64"], None
+        _cache_log.info("[cache] MISS | model=%s | func=generate_image_302_ref → 调用 API", IMAGE_REF_MODEL)
 
     # ── Step 1: 上传参考图到图床，获取公开 URL ──────────────────────────────
     try:
@@ -963,6 +975,7 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
         f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
     )
     try:
+        _cache_log.info("[cache] CALL  | model=%s | func=generate_image_302_ref", IMAGE_REF_MODEL)
         resp = PRIMARY_CLIENT.chat.completions.create(
             model=IMAGE_REF_MODEL,
             messages=[
@@ -1170,8 +1183,8 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
     if _CACHE_MODE == "playback":
         cached = _cache.load("chat/completions", IMAGE_REF_MODEL, {"prompt": prompt})
         if cached is not None and cached.get("b64"):
-            _cache_log.info("[cache] PLAYBACK 图片生成命中: %s", prompt[:30])
             return cached["b64"], None
+        _cache_log.info("[cache] MISS | model=%s | func=generate_image_302 → 调用 API", IMAGE_REF_MODEL)
 
     # ── 无参考照片：纯文本生图，同样走 gemini-3-pro-image-preview ────────────
     _log_i.info(f"[image] 调用 {IMAGE_REF_MODEL} 纯文本生图")
@@ -1182,6 +1195,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
         f"请直接输出生成的图片。"
     )
     try:
+        _cache_log.info("[cache] CALL  | model=%s | func=generate_image_302", IMAGE_REF_MODEL)
         resp = PRIMARY_CLIENT.chat.completions.create(
             model=IMAGE_REF_MODEL,
             messages=[{"role": "user", "content": full_prompt}],
@@ -1587,12 +1601,13 @@ def generate_video_kling(
         cached = _cache.load("video/generate", "kling-v3",
                              {"prompt": prompt, "img_hash": img_hash})
         if cached is not None:
-            _cache_log.info("[cache] PLAYBACK 视频生成命中: %s", prompt[:30])
             return cached
+        _cache_log.info("[cache] MISS | model=kling-v3 | func=generate_video_kling → 调用 API")
 
     # ── 1. 若未配置可灵官方 key，直接走 302.ai ───────────────────────────────
     if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
         _log_v.info("[video] 可灵官方 key 未配置，直接使用 302.ai 备用接口")
+        _cache_log.info("[cache] CALL  | model=302.ai(kling2.6) | func=generate_video_kling")
         result = generate_video_302ai_i2v(
             prompt=prompt,
             image_b64_or_url=image_url,
@@ -1692,6 +1707,7 @@ def generate_video_kling(
         # 跳过提交，直接进入轮询
         task_id = _task_id_only
     else:
+        _cache_log.info("[cache] CALL  | model=kling-v3 | func=generate_video_kling")
         try:
             r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
             try:
@@ -1784,16 +1800,17 @@ generate_video_302 = generate_video_kling
 
 # ── 分镜专用结构化调用（MV04，使用 gpt-4o） ──────────────────────────────────
 
-def call_storyboard(system_prompt: str, user_content: str) -> Dict[str, Any]:
+def call_storyboard(system_prompt: str, user_content: str, use_cache: bool = True) -> Dict[str, Any]:
     """
     分镜制作专用函数，使用 gpt-4o 优先队列。
     gpt-4o 支持 JSON mode，速度更快，结构化输出更稳定。
     """
     # ── Playback ──
-    if _CACHE_MODE == "playback":
+    if _CACHE_MODE == "playback" or use_cache:
         cached = _cache.load("chat/completions", STORYBOARD_MODEL, {"system": system_prompt, "user": user_content})
         if cached is not None:
             return cached
+        _cache_log.info("[cache] MISS | model=%s | func=call_storyboard → 调用 API", STORYBOARD_MODEL)
 
     last_error: Optional[str] = None
     _had_fallback = False
@@ -1802,6 +1819,7 @@ def call_storyboard(system_prompt: str, user_content: str) -> Dict[str, Any]:
         sys_content   = system_prompt if use_json_mode else _json_system_hint(system_prompt)
         for attempt in range(1, 4):
             try:
+                _cache_log.info("[cache] CALL  | model=%s | func=call_storyboard", model_name)
                 kwargs: Dict[str, Any] = dict(
                     model=model_name,
                     messages=[
