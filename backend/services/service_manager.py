@@ -1471,8 +1471,27 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
             video_labels.append(f"[v{filter_idx}]")
             filter_idx += 1
 
-        # concat 视频
-        concat_label = f"{''.join(video_labels)}concat=n={len(usable)}:v=1:a=0[outv]"
+        # 为每个分镜添加淡入淡出效果
+        # 场景开头淡入（0.3秒），场景结尾淡出（0.3秒）
+        fade_dur = 0.3
+        faded_labels = []
+        for idx, (label, entry) in enumerate(zip(video_labels, usable)):
+            scene_dur = entry["_target_dur"]
+            fade_label = f"[vf{idx}]"
+
+            # 头部淡入 + 尾部淡出（alpha 透明叠加实现）
+            fade_in_dur = min(fade_dur, scene_dur)
+            fade_out_start = max(0, scene_dur - fade_dur)
+
+            fade_filter = (
+                f"{label}fade=t=in:st=0:d={fade_in_dur}:alpha=1,"
+                f"fade=t=out:st={fade_out_start}:d={scene_dur - fade_out_start}:alpha=1{fade_label}"
+            )
+            filters.append(fade_filter)
+            faded_labels.append(fade_label)
+
+        # 视频 concat
+        concat_label = f"{''.join(faded_labels)}concat=n={len(usable)}:v=1:a=0[outv]"
         filters.append(concat_label)
         final_v_label = "[outv]"
 
