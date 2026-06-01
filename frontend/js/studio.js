@@ -367,10 +367,8 @@ const MV06_STEPS = [
   { key: 'tts_done',        label: '已完成TTS语音合成',       pct: 25 },
   { key: 'bgm_running',     label: 'BGM背景音乐匹配中…',      pct: 30 },
   { key: 'bgm_done',        label: '已完成BGM背景音乐匹配',   pct: 45 },
-  { key: 'llm_running',     label: 'LLM生成影像脚本中…',      pct: 50 },
-  { key: 'llm_done',        label: '已完成LLM影像脚本生成',   pct: 70 },
-  { key: 'video_running',   label: '视频合成中…',             pct: 75 },
-  { key: 'video_done',      label: '视频合成完成',            pct: 95 },
+  { key: 'video_running',   label: '视频合成中…',             pct: 50 },
+  { key: 'video_done',      label: '视频合成完成',            pct: 90 },
   { key: 'done',            label: '全部完成',               pct: 100 },
 ];
 
@@ -401,7 +399,7 @@ function updateMV06Progress(stepKey) {
 
 // ── 展示最终视频（带下载 + 重新生成按钮）─────
 // loadNow=true: 点击"合成"生成的，立即加载; loadNow=false: 刷新页面恢复，不自动加载
-function showFinalVideo(url, loadNow = true) {
+function showFinalVideo(url, loadNow = true, timings = null) {
   hide('phaseMV06Progress');
   renderMV06Steps('done');
   updateMV06Progress('done');
@@ -416,14 +414,35 @@ function showFinalVideo(url, loadNow = true) {
          <div style="font-size:2rem;margin-bottom:8px;">🎬</div>
          <div>最终影像已生成，点击播放</div>
        </div>`;
+  let timingsHtml = '';
+  if (timings && Object.keys(timings).length) {
+    const labels = {
+      approving: '闸门批准', tts: 'TTS语音合成', bgm: 'BGM音乐',
+      tts_bgm_total: 'TTS+BGM并行', video: '视频拼接',
+    };
+    const rows = Object.entries(timings)
+      .filter(([k]) => k !== '__proto__')
+      .map(([k, v]) => `<tr><td>${labels[k] || k}</td><td>${v}s</td></tr>`)
+      .join('');
+    timingsHtml = `<details style="margin-top:12px;font-size:.85rem;color:var(--muted-l);cursor:pointer;">
+      <summary>查看各阶段耗时</summary>
+      <table style="margin-top:8px;border-collapse:collapse;width:100%;">
+        ${rows}
+      </table>
+    </details>`;
+  }
   $('finalOutput').innerHTML = `${videoTag}
      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
        <a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a>
        <button class="btn" id="btnRegenMV06">重新生成</button>
-     </div>`;
+       <button class="btn" id="btnRegenBGM">重新生成BGM</button>
+     </div>
+     ${timingsHtml}`;
   show('phaseFinal');
   const regenBtn = $('btnRegenMV06');
   if (regenBtn) regenBtn.onclick = regenerateMV06;
+  const regenBgmBtn = $('btnRegenBGM');
+  if (regenBgmBtn) regenBgmBtn.onclick = regenBGM;
   // 点击占位符 → 替换为真实 video 标签
   const ph = $('mv06VideoPlaceholder');
   if (ph) ph.onclick = () => {
@@ -501,7 +520,13 @@ async function finalCut() {
 
       if (mv06.status === 'done') {
         setPill('MV06', 'done');
-        showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '');
+        try {
+          showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '', true, mv06.timings);
+        } catch (e) {
+          console.warn('[mv06] showFinalVideo 出错：', e.message);
+          $('errorOutput').textContent = '视频渲染完成但加载失败：' + e.message;
+          show('phaseError');
+        }
       } else {
         // error
         setPill('MV06', '');
@@ -511,9 +536,10 @@ async function finalCut() {
         $('errorOutput').textContent = err;
         show('phaseError');
       }
-      btn.disabled = false; btn.textContent = old;
     } catch (e) {
       console.warn('[mv06 poll] 轮询出错：', e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = old;
     }
   }, 10_000);
 }
@@ -545,6 +571,24 @@ async function regenerateMV06() {
   finalCut();
 }
 
+// 重新生成 BGM（跳过缓存，重新调 Suno）
+async function regenBGM() {
+  if (!confirm('确定要重新生成 BGM 吗？将跳过缓存重新调用 Suno。')) return;
+
+  const btn = $('btnRegenBGM');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = 'BGM生成中…';
+
+  try {
+    await apiPost(`/audio/bgm/${state.sid}?force=true`, {});
+    toast('BGM 已重新生成');
+  } catch (e) {
+    toast('BGM 生成失败：' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
 // 页面加载时恢复 MV06 状态（缓存视频 / 恢复轮询）
 async function resumeMV06() {
   const r = await apiGet(`/pipeline/status/${state.sid}`);
@@ -556,7 +600,7 @@ async function resumeMV06() {
     const url = r.video_url || '';
     if (url) {
       setPill('MV06', 'done');
-      showFinalVideo(url, false);  // 不自动加载视频
+      showFinalVideo(url, false, mv06.timings);  // 不自动加载视频
     }
   } else if (mv06.status === 'running') {
     // 后台还在跑，恢复轮询
@@ -620,7 +664,7 @@ function finalCutPollOnly(initData) {
 
       if (mv06.status === 'done') {
         setPill('MV06', 'done');
-        showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '');
+        showFinalVideo(r.video_url || r.mv06_result?.final_video_url || '', true, mv06.timings);
         const btnD = $('btnFinalCut');
         btnD.disabled = false; btnD.textContent = '重新生成';
       } else {

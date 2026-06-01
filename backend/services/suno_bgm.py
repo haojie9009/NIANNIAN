@@ -117,7 +117,7 @@ def generate_bgm_async(
 
 def poll_bgm(
     task_id: str,
-    max_wait: int = 300,
+    max_wait: int = 600,
     interval: int = 15,
 ) -> Dict[str, Any]:
     """

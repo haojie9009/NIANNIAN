@@ -77,11 +77,11 @@ def _clean_ssml_for_tts(raw_text: str) -> str:
 
 # ─── BGM 匹配 ─────────────────────────────────────────────────────────
 @router.post("/bgm/{sid}")
-def match_bgm_endpoint(sid: str):
+def match_bgm_endpoint(sid: str, force: bool = False):
     """根据 session 上下文，用 LLM 分析情感基调并匹配 BGM。"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
 
-    return sm.match_bgm(sid)
+    return sm.match_bgm(sid, force=force)

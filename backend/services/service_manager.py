@@ -1137,11 +1137,11 @@ def generate_tts_segments(sid: str, scenes: list) -> list:
     return tts_segments
 
 
-def generate_bgm(sid: str) -> dict:
+def generate_bgm(sid: str, force: bool = False) -> dict:
     """为 session 生成 BGM（分析情感 → 生成/缓存 → 存入 session）。
     返回 bgm_result dict（含 emotion, bgm_url, duration_sec)。
     """
-    bgm_result = match_bgm(sid)
+    bgm_result = match_bgm(sid, force=force)
     s = session_store.require(sid)
     s.setdefault("audio", {})
     s["audio"]["bgm"] = bgm_result
@@ -1158,12 +1158,34 @@ _WINDOWS_CHINESE_FONTS = [
     "C:/Windows/Fonts/simsun.ttc",     # 宋体
     "C:/Windows/Fonts/simkai.ttf",     # 楷体
 ]
+_LINUX_CHINESE_FONTS = [
+    "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+    "/usr/share/fonts/google-noto-cjk/NotoSansSC-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
+    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+]
 
 def _find_chinese_font() -> Optional[str]:
-    for p in _WINDOWS_CHINESE_FONTS:
+    # 优先使用项目自带字体
+    bundled = ROOT_DIR / "backend" / "assets" / "fonts" / "NotoSansSC-Regular.otf"
+    if bundled.exists():
+        return str(bundled)
+    # 再查系统字体
+    for p in _LINUX_CHINESE_FONTS + _WINDOWS_CHINESE_FONTS:
         if Path(p).exists():
             return p
     return None
+
+
+def _format_srt_time(seconds: float) -> str:
+    """将秒数转换为 SRT 时间格式 HH:MM:SS,mmm"""
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
 
 
 def _url_to_local_path(url: str) -> Optional[Path]:
@@ -1255,7 +1277,7 @@ def _extend_video(clip, target_duration):
 
     if speed >= 0.95:
         return clip  # 差异很小，直接使用
-    
+
     src = clip.filename
     base = Path(src).stem
     parent = Path(src).parent
@@ -1270,6 +1292,7 @@ def _extend_video(clip, target_duration):
             str(out_file),
         ],
         capture_output=True,
+        encoding='utf-8', errors='replace',
     )
 
     new_clip = VideoFileClip(str(out_file))
@@ -1277,16 +1300,52 @@ def _extend_video(clip, target_duration):
         new_clip = new_clip.subclipped(0, target_duration)
     return new_clip
 
+
+def _extend_video_file(src_path: str, target_duration: float) -> str:
+    """用 ffmpeg minterpolate 补帧延长视频文件，返回输出文件路径。"""
+    import subprocess
+    from moviepy.config import FFMPEG_BINARY
+    from moviepy import VideoFileClip
+
+    clip = VideoFileClip(src_path)
+    speed = clip.duration / target_duration
+    clip.close()
+
+    if speed >= 0.95:
+        return src_path
+
+    base = Path(src_path).stem
+    parent = Path(src_path).parent
+    out_file = parent / f"_interp_{base}.mp4"
+
+    result = subprocess.run(
+        [
+            FFMPEG_BINARY, "-y", "-i", src_path,
+            "-filter_complex",
+            f"setpts=PTS/{speed},minterpolate='mi_mode=blend:fps=24'",
+            "-c:v", "libx264", "-an",
+            str(out_file),
+        ],
+        capture_output=True,
+        encoding='utf-8', errors='replace',
+    )
+
+    if result.returncode != 0:
+        svc_logger.error("[extend_video] ffmpeg 补帧失败: %s", result.stderr[-200:] if result.stderr else "")
+        return src_path
+
+    return str(out_file)
+
  
 def assemble_final_video(s: dict) -> Dict[str, Any]:
     """拼接最终视频：视频/图片 + 旁白 + BGM + 字幕。
+    使用 ffmpeg complex filter 一次性完成，避免 moviepy 逐帧渲染。
     返回 {"ok": bool, "video_url": str, "duration_sec": float, "error": str}
     """
-    from moviepy import (
-        VideoFileClip, AudioFileClip, CompositeAudioClip, CompositeVideoClip,
-        concatenate_videoclips,
-    )
+    from moviepy.config import FFMPEG_BINARY
+    import subprocess as _subprocess
 
+    _t0 = time.time()
     sid = s["session_id"]
     mv04 = s["mv_outputs"].get("MV04")
     scenes = _get_scenes_from_mv04(mv04)
@@ -1295,13 +1354,12 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
     bgm_info = audio_info.get("bgm", {})
 
     # ── 1. 筛选可用分镜（视频 or 图片）──
+    _t = time.time()
     usable = []
     for i, sc in enumerate(scenes):
-        entry = dict(sc)  # copy
+        entry = dict(sc)
         entry["_idx"] = i
 
-
-        # 优先本地视频文件
         vid_found = False
         if sc.get("_video_url"):
             p = _url_to_local_path(sc["_video_url"])
@@ -1310,7 +1368,6 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
                 entry["video_mode"] = "video"
                 vid_found = True
 
-        # 其次本地图片文件
         if not vid_found:
             img_url = sc.get("_img_url") or sc.get("_image_url")
             if img_url:
@@ -1327,163 +1384,293 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
     if not usable:
         return {"ok": False, "error": "没有可用的分镜（图片/视频均未找到）"}
 
-    # 构建 audio_path 映射（scene_idx → local path + duration）
     audio_map = {}
-    for t in tts_segments:
-        idx = t.get("scene_idx")
-        p = _url_to_local_path(t.get("audio_url", ""))
+    for t_seg in tts_segments:
+        idx = t_seg.get("scene_idx")
+        p = _url_to_local_path(t_seg.get("audio_url", ""))
         if p and p.exists():
-            audio_map[idx] = {"path": str(p), "duration": t.get("duration_sec", 0)}
+            audio_map[idx] = {"path": str(p), "duration": t_seg.get("duration_sec", 0)}
 
     bgm_path = _url_to_local_path(bgm_info.get("bgm_url", ""))
     if bgm_path and not bgm_path.exists():
         bgm_path = None
 
-    svc_logger.info("[assemble] sid=%s usable_scenes=%d audio_tracks=%d bgm=%s",
-                    sid, len(usable), len(audio_map), "yes" if bgm_path else "no")
-
-    scene_clips = []
-    scene_durations = []
+    _d_filter = round(time.time() - _t, 1)
+    svc_logger.info("[assemble] sid=%s usable_scenes=%d audio_tracks=%d bgm=%s (筛选 %.1fs)",
+                    sid, len(usable), len(audio_map), "yes" if bgm_path else "no", _d_filter)
 
     try:
+        # ── 2. 计算各分镜时长和处理 ──
+        _t = time.time()
+        OUT_W, OUT_H = 1280, 720
+        fps = 24
+        total_dur = 0.0
+        scene_starts = []
+
         for entry in usable:
             i = entry["_idx"]
             audio_dur = audio_map.get(i, {}).get("duration", 0) or 0
-            voice_text = entry.get("voice_script") or entry.get("narration") or entry.get("subtitle") or ""
-
-            # 获取视频/图片片段
             if entry.get("video_mode") == "ken_burns":
-                vid_dur = 5.0  # Ken Burns 默认时长
-                target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
-                target_dur = max(target_dur, 1.0)
-                vid_clip = _make_ken_burns_clip(entry["image_path"], target_dur)
-                video_w, video_h = vid_clip.size
+                dur = max(5.0, audio_dur) if audio_dur > 0 else 5.0
+                entry["_target_dur"] = dur
             else:
-                vid_clip = VideoFileClip(entry["video_path"]).without_audio()
-                vid_dur = vid_clip.duration
+                from moviepy import VideoFileClip
+                vid_dur = VideoFileClip(entry["video_path"]).duration
                 target_dur = max(vid_dur, audio_dur) if audio_dur > 0 else vid_dur
                 target_dur = max(target_dur, 1.0)
-                video_w, video_h = vid_clip.size
 
+                if vid_dur < target_dur - 0.1:
+                    # 视频短于目标 → minterpolate 补帧延长
+                    svc_logger.info("[assemble] scene%d 视频 %.1fs < %.1fs，执行补帧", i, vid_dur, target_dur)
+                    interp_path = _extend_video_file(entry["video_path"], target_dur)
+                    if interp_path:
+                        entry["_video_path"] = interp_path
+                    dur = target_dur
+                elif vid_dur > target_dur + 0.1:
+                    dur = target_dur
+                else:
+                    dur = vid_dur
+                entry["_target_dur"] = dur
+
+            scene_starts.append(total_dur)
+            total_dur += dur
             mode_str = "Ken Burns" if entry.get("video_mode") == "ken_burns" else "视频"
+            svc_logger.info("[assemble] scene%d %s %.1fs (音频 %.1fs)", i, mode_str, dur, audio_dur)
 
+        _d_calc = round(time.time() - _t, 1)
+        svc_logger.info("[assemble] 计算时长完成 (%.1fs) 总时长 %.1fs", _d_calc, total_dur)
+
+        # ── 3. 构建 ffmpeg 命令 ──
+        _t = time.time()
+        cmd = [FFMPEG_BINARY, "-y"]
+        filters = []
+        filter_idx = 0  # ffmpeg -i 输入序号
+        video_labels = []
+
+        # 视频/图片输入 + Ken Burns 或缩放
+        for entry in usable:
             if entry.get("video_mode") == "ken_burns":
-                pass  # 已经用 target_dur 创建，无需二次渲染
-            elif vid_dur < target_dur - 0.1:
-                # 视频短于目标 → 补帧延长
-                vid_clip = _extend_video(vid_clip, target_dur)
-                # 视频短于目标 → 慢放
-                # from moviepy import vfx
-                # speed = vid_dur / target_dur
-                # vid_clip = vid_clip.with_effects([vfx.MultiplySpeed(speed)])
-                # speedx 可能时长不精确，截断
-                # if vid_clip.duration > target_dur + 0.1:
-                #     vid_clip = vid_clip.subclipped(0, target_dur)
-            elif vid_dur > target_dur + 0.1:
-                vid_clip = vid_clip.subclipped(0, target_dur)
+                cmd += ["-loop", "1", "-i", entry["image_path"]]
+                dur = entry["_target_dur"]
+                dur_frames = int(dur * fps)
+                # zoompan: 缓慢放大 15%，居中裁剪
+                zoompan = (
+                    f"[{filter_idx}]format=yuv420p,"
+                    f"zoompan=z='min(1+0.15*on/{dur_frames},1.15)':"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d=1:fps={fps}:s={OUT_W}x{OUT_H}:duration={dur}"
+                    f"[v{filter_idx}]"
+                )
+                filters.append(zoompan)
+            else:
+                vid_path = entry.get("_video_path", entry["video_path"])
+                cmd += ["-i", vid_path]
+                dur = entry["_target_dur"]
+                trim = f"[{filter_idx}]trim=duration={dur:.3f},setpts=PTS-STARTPTS,scale={OUT_W}:{OUT_H},format=yuv420p[v{filter_idx}]"
+                filters.append(trim)
+            video_labels.append(f"[v{filter_idx}]")
+            filter_idx += 1
 
-            scene_clips.append(vid_clip)
-            scene_durations.append(target_dur)
-            svc_logger.info("[assemble] scene%d %s %.1fs (音频 %.1fs)", i, mode_str, target_dur, audio_dur)
+        # concat 视频
+        concat_label = f"{''.join(video_labels)}concat=n={len(usable)}:v=1:a=0[outv]"
+        filters.append(concat_label)
+        final_v_label = "[outv]"
 
-        # 拼接视频
-        final_video = concatenate_videoclips(scene_clips, method="compose")
+        # 音频处理
+        audio_labels = []
+        audio_idx_start = len(usable)  # 音频输入的起始序号
 
-        # 计算起始时间
-        scene_starts = []
-        t = 0
-        for dur in scene_durations:
-            scene_starts.append(t)
-            t += dur
-
-        # ── 2. 旁白音轨 ──
+        # 旁白音频
         has_voiceover = False
-        audio_clips_for_mix = []
-        for entry, dur, start in zip(usable, scene_durations, scene_starts):
+        audio_labels = []
+        for entry in usable:
             i = entry["_idx"]
             if i in audio_map:
-                clip = AudioFileClip(audio_map[i]["path"])
-                if clip.duration > dur:
-                    clip = clip.subclipped(0, dur)
-                clip = clip.with_start(start)
-                audio_clips_for_mix.append(clip)
                 has_voiceover = True
+                audio_path = audio_map[i]["path"]
+                cmd += ["-i", audio_path]
+                start_ms = int(scene_starts[i] * 1000)
+                dur = entry["_target_dur"]
+                atrim = f"[{audio_idx_start + len(audio_labels)}]atrim=end={dur:.3f},asetpts=PTS-STARTPTS,adelay={start_ms}|{start_ms}:all=1[a{len(audio_labels)}]"
+                filters.append(atrim)
+                audio_labels.append(f"[a{len(audio_labels)}]")
 
-        voiceover = None
-        if has_voiceover:
-            voiceover = CompositeAudioClip(audio_clips_for_mix)
-
-        # ── 3. 混音：旁白 + BGM ──
-        if has_voiceover and bgm_path:
-            svc_logger.info("[assemble] 混入 BGM + 旁白")
-            bgm = AudioFileClip(str(bgm_path))
-            video_dur = final_video.duration
-            if bgm.duration < video_dur:
-                bgm = bgm.loop(duration=video_dur)
-            else:
-                bgm = bgm.subclipped(0, video_dur)
-            bgm = bgm.with_volume_scaled(0.2)
-            mixed = CompositeAudioClip([voiceover, bgm])
-            final_video = final_video.with_audio(mixed)
-        elif has_voiceover:
-            svc_logger.info("[assemble] 使用旁白音轨（无 BGM）")
-            final_video = final_video.with_audio(voiceover)
-        elif bgm_path:
-            svc_logger.info("[assemble] 混入 BGM（无旁白）")
-            bgm = AudioFileClip(str(bgm_path))
-            video_dur = final_video.duration
-            if bgm.duration < video_dur:
-                bgm = bgm.loop(duration=video_dur)
-            else:
-                bgm = bgm.subclipped(0, video_dur)
-            bgm = bgm.with_volume_scaled(0.3)
-            final_video = final_video.with_audio(bgm)
-
-        # ── 4. 字幕（可选，moviepy TextClip 在 Windows 上需要 ImageMagick）──
-        try:
-            has_subtitles = any(
-                (s.get("voice_script") or s.get("narration") or s.get("subtitle") or "").strip()
-                for s in usable
+        # BGM
+        has_bgm = bgm_path is not None
+        if has_bgm:
+            cmd += ["-i", str(bgm_path)]
+            bgm_audio_idx = audio_idx_start + len(audio_labels)
+            bgm_volume = 0.2 if has_voiceover else 0.3
+            bgm_filter = (
+                f"[{bgm_audio_idx}]aloop=-1:size=999999,"
+                f"atrim=end={total_dur:.3f},"
+                f"asetpts=PTS-STARTPTS,"
+                f"volume={bgm_volume}[abgm]"
             )
-            if has_subtitles:
-                subtitle_clip = _build_subtitle_clip(
-                    usable, scene_durations, scene_starts, (video_w, video_h)
-                )
-                if subtitle_clip:
-                    final_video = CompositeVideoClip([final_video, subtitle_clip])
-                    svc_logger.info("[assemble] 字幕已叠加")
-        except Exception as e:
-            svc_logger.warning("[assemble] 字幕叠加失败: %s", e)
+            filters.append(bgm_filter)
+            audio_labels.append("[abgm]")
 
-        # ── 5. 输出 ──
+        # 混音
+        if audio_labels:
+            inputs = "".join(audio_labels)
+            amix = f"{inputs}amix=inputs={len(audio_labels)}:duration=longest[outa]"
+            filters.append(amix)
+            final_a_label = "[outa]"
+        else:
+            final_a_label = None
+
+        # 字幕：subtitles 是 source filter，不能在 filter_complex 里作为 sink 使用
+        # 方案：两遍渲染
+        #   Pass 1: 视频 concat + 音频混音 → 中间文件
+        #   Pass 2: 中间文件 + subtitles filter → 最终输出
+        font = _find_chinese_font()
+        import tempfile
+        import shutil as _shutil
+        import os as _os
+        srt_file = None
+        temp_dir = None
+        has_subtitles = any(
+            (sc.get("voice_script") or sc.get("narration") or sc.get("subtitle") or "").strip()
+            for sc in usable
+        )
+        if has_subtitles and font:
+            try:
+                temp_dir = tempfile.mkdtemp(prefix="niannian_sub_")
+                srt_file = _os.path.join(temp_dir, "subs.srt")
+                srt_index = 1
+                with open(srt_file, "w", encoding="utf-8-sig") as f:
+                    for entry in usable:
+                        i = entry["_idx"]
+                        text = (entry.get("voice_script") or entry.get("narration") or entry.get("subtitle") or "").strip()
+                        if text:
+                            start = scene_starts[i]
+                            dur = entry["_target_dur"]
+                            start_ts = _format_srt_time(start)
+                            end_ts = _format_srt_time(start + dur)
+                            f.write(f"{srt_index}\n")
+                            f.write(f"{start_ts} --> {end_ts}\n")
+                            f.write(f"{text}\n\n")
+                            srt_index += 1
+                svc_logger.info("[assemble] 已生成 SRT 字幕文件 (%d 条)", srt_index - 1)
+            except Exception as e:
+                svc_logger.warning("[assemble] 字幕文件创建失败: %s", e)
+                srt_file = None
+                if temp_dir:
+                    _shutil.rmtree(temp_dir, ignore_errors=True)
+                    temp_dir = None
+
+        # ── Pass 1: 视频拼接 + 音频混音 ──
+        filter_complex = ";".join(filters)
+        cmd += ["-filter_complex", filter_complex]
+        cmd += ["-map", final_v_label]
+        if final_a_label:
+            cmd += ["-map", final_a_label]
+        cmd += [
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-r", str(fps),
+            "-shortest",
+        ]
+
         FINAL_DIR.mkdir(parents=True, exist_ok=True)
         out_filename = f"final_{sid}_{int(time.time())}.mp4"
         out_path = FINAL_DIR / out_filename
-        svc_logger.info("[assemble] 渲染输出 → %s", out_path)
-        final_video.write_videofile(
-            str(out_path), codec="libx264", audio_codec="aac",
-            logger=None, fps=24, preset="ultrafast", threads=4
-        )
-        final_video.close()
+
+        if has_subtitles and srt_file:
+            # 两遍渲染：Pass 1 输出中间文件
+            import tempfile as _tf
+            _tmp_fd, inter_path = _tf.mkstemp(suffix="_inter.mp4", dir=str(FINAL_DIR))
+            _os.close(_tmp_fd)
+            cmd_pass1 = cmd + [inter_path]
+
+            svc_logger.info("[assemble] Pass 1: 视频拼接 + 音频混音 (无字幕)")
+            _t = time.time()
+            result = _subprocess.run(cmd_pass1, capture_output=True, encoding='utf-8', errors='replace')
+            _d_pass1 = round(time.time() - _t, 1)
+
+            if result.returncode != 0:
+                err_msg = result.stderr[-500:] if result.stderr else "unknown"
+                svc_logger.error("[assemble] Pass 1 失败: %s", err_msg)
+                _os.unlink(inter_path)
+                if temp_dir:
+                    _shutil.rmtree(temp_dir, ignore_errors=True)
+                return {"ok": False, "error": f"ffmpeg Pass 1 失败: {err_msg}"}
+
+            svc_logger.info("[assemble] Pass 1 完成 (%.1fs)", _d_pass1)
+
+            # Pass 2: 中间文件 + subtitles filter → 最终输出
+            escaped_path = srt_file.replace("\\", "\\\\").replace(":", "\\:")
+            font_dir = _os.path.dirname(font).replace("\\", "\\\\").replace(":", "\\:")
+            if not font_dir.endswith("\\\\") and not font_dir.endswith("/"):
+                font_dir += "\\\\"
+            font_name = "Source Han Sans SC"
+            vf = (
+                f"subtitles='{escaped_path}':fontsdir='{font_dir}':"
+                f"force_style='Fontname={font_name}'"
+            )
+            cmd2 = [
+                FFMPEG_BINARY, "-y",
+                "-i", inter_path,
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-c:a", "copy",
+                "-r", str(fps),
+                str(out_path),
+            ]
+
+            svc_logger.info("[assemble] Pass 2: 叠加字幕 → %s", out_path)
+            _t = time.time()
+            result = _subprocess.run(cmd2, capture_output=True, encoding='utf-8', errors='replace')
+            _d_pass2 = round(time.time() - _t, 1)
+
+            # 清理中间文件
+            _os.unlink(inter_path)
+            if temp_dir:
+                _shutil.rmtree(temp_dir, ignore_errors=True)
+
+            if result.returncode != 0:
+                err_msg = result.stderr[-500:] if result.stderr else "unknown"
+                svc_logger.error("[assemble] Pass 2 失败: %s", err_msg)
+                return {"ok": False, "error": f"ffmpeg Pass 2 失败: {err_msg}"}
+
+            _d_encode = _d_pass1 + _d_pass2
+            svc_logger.info(
+                "[assemble] sid=%s 总耗时 %.1fs | 筛选 %.1fs | 时长计算 %.1fs | "
+                "Pass1(视频+音频) %.1fs | Pass2(字幕) %.1fs",
+                sid, round(time.time() - _t0, 1), _d_filter, _d_calc, _d_pass1, _d_pass2,
+            )
+        else:
+            # 无字幕：直接输出
+            cmd.append(str(out_path))
+
+            svc_logger.info("[assemble] ffmpeg 命令已构建 (%.1fs)", round(time.time() - _t, 1))
+            svc_logger.info("[assemble] 渲染输出 → %s", out_path)
+
+            _t = time.time()
+            result = _subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
+            _d_encode = round(time.time() - _t, 1)
+
+            if result.returncode != 0:
+                err_msg = result.stderr[-500:] if result.stderr else "unknown"
+                svc_logger.error("[assemble] ffmpeg 失败: %s", err_msg)
+                return {"ok": False, "error": f"ffmpeg 渲染失败: {err_msg}"}
+
+            svc_logger.info(
+                "[assemble] sid=%s 总耗时 %.1fs | 筛选 %.1fs | 时长计算 %.1fs | ffmpeg编码 %.1fs",
+                sid, round(time.time() - _t0, 1), _d_filter, _d_calc, _d_encode,
+            )
 
         video_url = f"/api/outputs/final_cuts/{out_filename}"
         return {
             "ok": True,
             "video_url": video_url,
-            "duration_sec": round(sum(scene_durations), 1),
+            "duration_sec": round(total_dur, 1),
             "scenes_count": len(usable),
         }
 
     except Exception as e:
         svc_logger.exception("[assemble] failed: %s", e)
         return {"ok": False, "error": str(e)}
-
-    finally:
-        for c in scene_clips:
-            try:
-                c.close()
-            except Exception:
-                pass
 
 
 # ── BGM 匹配 ──────────────────────────────────────────────────────────
@@ -1496,14 +1683,13 @@ def _gen_bgm_prompt(style) -> str:
     return tags
 
 
-def match_bgm(sid: str) -> dict:
+def match_bgm(sid: str, force: bool = False) -> dict:
     """Suno 生成 BGM（带缓存）→ 返回 {bgm_url, emotion, duration_sec}。"""
     s = session_store.require(sid)
     style = s.get("form_data", {}).get("style_preference", "warm_nostalgia")
 
-
-    # 1) 查 session 缓存
-    if _CACHE_MODE == "playback":
+    # 1) 查 session 缓存（force=true 时跳过）
+    if not force:
         existing_bgm = s.get("audio", {}).get("bgm", {})
         if existing_bgm.get("emotion") == style and existing_bgm.get("bgm_url"):
             cached_path = _url_to_local_path(existing_bgm["bgm_url"])
@@ -1511,7 +1697,7 @@ def match_bgm(sid: str) -> dict:
                 svc_logger.info("[bgm] session cache hit sid=%s emotion=%s", sid, style)
                 return existing_bgm
 
-    # 3) 生成
+    # 2) 生成
     name = s.get("form_data", {}).get("deceased_name", "未知亲人")
     tags = _gen_bgm_prompt(style)
     audio_bytes = generate_bgm_suno(tags=tags, title=f"追思 · {name}")
@@ -1546,6 +1732,16 @@ def _run_mv06_work(sid: str) -> None:
     """后台执行 MV06 完整流程。结果写入 session pipeline_state。"""
     import traceback
 
+    _timings: dict[str, float] = {}
+
+    # 清除旧的 mv06_result，避免 /status 返回 stale 错误
+    try:
+        s0 = session_store.require(sid)
+        s0.pop("mv06_result", None)
+        session_store.update(sid)
+    except Exception:
+        pass
+
     def _set_progress(step: str, label: str) -> None:
         """更新 MV06 进度到 session。"""
         try:
@@ -1555,6 +1751,7 @@ def _run_mv06_work(sid: str) -> None:
                 "step": step,
                 "label": label,
                 "duration_sec": None,
+                "timings": dict(_timings),
                 "error": None,
             }
             session_store.update(sid)
@@ -1567,13 +1764,16 @@ def _run_mv06_work(sid: str) -> None:
 
         # 1. 自动批准 MV05 闸门
         _set_progress("approving", "准备中…")
+        _t0 = time.time()
         gate_manager.approve(gate, "MV05")
+        _timings["approving"] = round(time.time() - _t0, 1)
         s["pipeline_state"]["MV05"] = {"status": "approved", "duration_sec": None, "error": None}
         session_store.update(sid)
-        svc_logger.info("[mv06.pre] MV05 gate auto-approved sid=%s", sid)
+        svc_logger.info("[mv06.pre] MV05 gate auto-approved sid=%s (%.1fs)", sid, _timings["approving"])
 
         # 2. TTS + BGM 并行执行
-        _set_progress("tts_bgm_running", "TTS语音合成 + BGM背景音乐匹配中…")
+        _set_progress("tts_running", "TTS语音合成中…")
+        _set_progress("bgm_running", "BGM背景音乐匹配中…")
         scenes = _get_scenes_from_mv04(s["mv_outputs"].get("MV04"))
         s.setdefault("audio", {})
 
@@ -1583,38 +1783,63 @@ def _run_mv06_work(sid: str) -> None:
 
         def _run_tts():
             try:
-                return generate_tts_segments(sid, scenes)
+                _start = time.time()
+                result = generate_tts_segments(sid, scenes)
+                elapsed = round(time.time() - _start, 1)
+                _timings["tts"] = elapsed
+                svc_logger.info("[mv06.pre] TTS completed sid=%s segments=%d (%.1fs)", sid, len(result) if result else 0, elapsed)
+                return result
             except Exception as e:
+                _timings["tts"] = round(time.time() - _start, 1)
+                svc_logger.error("[mv06.pre] TTS failed sid=%s (%.1fs): %s", sid, _timings["tts"], e)
                 _tts_exc.append(e)
                 return []
 
         def _run_bgm():
             try:
-                return generate_bgm(sid)
+                _start = time.time()
+                force_bgm = s.pop("force_bgm", False)
+                if force_bgm:
+                    session_store.update(sid)
+                result = generate_bgm(sid, force=force_bgm)
+                elapsed = round(time.time() - _start, 1)
+                _timings["bgm"] = elapsed
+                svc_logger.info("[mv06.pre] BGM completed sid=%s style=%s (%.1fs)", sid, result.get("emotion", "?"), elapsed)
+                return result
             except Exception as e:
+                _timings["bgm"] = round(time.time() - _start, 1)
+                svc_logger.error("[mv06.pre] BGM failed sid=%s (%.1fs): %s", sid, _timings["bgm"], e)
                 _bgm_exc.append(e)
                 return {}
 
+        _t_start = time.time()
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             tts_fut = pool.submit(_run_tts)
             bgm_fut = pool.submit(_run_bgm)
             tts_segments = tts_fut.result()
             bgm_result = bgm_fut.result()
+        _timings["tts_bgm_total"] = round(time.time() - _t_start, 1)
+        svc_logger.info("[mv06.pre] TTS+BGM parallel total sid=%s (%.1fs)", sid, _timings["tts_bgm_total"])
 
         s["audio"]["tts_segments"] = tts_segments
         if tts_segments:
             session_store.update(sid)
-            svc_logger.info("[mv06.pre] TTS synthesized %d segments sid=%s", len(tts_segments), sid)
+            svc_logger.info("[mv06.pre] TTS synthesized %d segments sid=%s (%.1fs)", len(tts_segments), sid, _timings.get("tts", 0))
+        _set_progress("tts_done", "已完成TTS语音合成")
 
         if _bgm_exc:
             svc_logger.warning("[mv06.pre] BGM 生成失败: %s", _bgm_exc[0])
-        _set_progress("tts_bgm_done", "已完成TTS语音合成 + BGM背景音乐匹配")
+        else:
+            s["audio"]["bgm"] = bgm_result
+            session_store.update(sid)
+        _set_progress("bgm_done", "已完成BGM背景音乐匹配")
 
         # 4. 视频拼接
         _set_progress("video_running", "视频合成中…")
         _t0 = time.time()
         video_result = assemble_final_video(s)
         _dur = round(time.time() - _t0, 1)
+        _timings["video"] = _dur
         if video_result.get("ok"):
             _set_progress("video_done", "视频合成完成")
 
@@ -1624,11 +1849,14 @@ def _run_mv06_work(sid: str) -> None:
             video_result["audio"]["tts_segments"] = tts_segments
             video_result["audio"]["bgm"] = bgm_result
 
+        _total = round(sum(_timings.values()), 1)
+
         s["pipeline_state"]["MV06"] = {
             "status": "done" if video_result.get("ok") else "error",
             "step": "done" if video_result.get("ok") else "error",
             "label": "视频合成完成" if video_result.get("ok") else "合成失败",
-            "duration_sec": _dur,
+            "duration_sec": _total,
+            "timings": _timings,
             "error": video_result.get("error"),
         }
         s.setdefault("mv06_result", {})
@@ -1636,7 +1864,7 @@ def _run_mv06_work(sid: str) -> None:
         if video_result.get("ok"):
             s["mv06_result"]["final_video_url"] = video_result["video_url"]
         session_store.update(sid)
-        svc_logger.info("[mv06] completed sid=%s ok=%s", sid, video_result.get("ok"))
+        svc_logger.info("[mv06] completed sid=%s ok=%s total=%.1fs timings=%s", sid, video_result.get("ok"), _total, _timings)
 
     except Exception:
         s = session_store.require(sid)
@@ -1645,7 +1873,8 @@ def _run_mv06_work(sid: str) -> None:
             "status": "error",
             "step": "error",
             "label": "合成失败",
-            "duration_sec": None,
+            "duration_sec": round(sum(_timings.values()), 1) if _timings else None,
+            "timings": _timings,
             "error": tb,
         }
         s["mv06_result"] = {"ok": False, "error": tb}
@@ -1673,7 +1902,6 @@ def _step_file_patterns(sid: str, mv_id: str) -> List[tuple]:
         patterns.append((GEN_VIDEOS_DIR, f"{sid}_scene*.mp4"))
     if mv_id == "MV06":
         patterns.append((FINAL_DIR, f"final_{sid}_*.mp4"))
-        patterns.append((AUDIO_OUTPUT_DIR, f"bgm_*.mp3"))
     return patterns
 
 

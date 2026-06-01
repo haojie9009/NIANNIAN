@@ -714,7 +714,7 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
         _llm_log.exception("[bgm] submit failed: %s", e)
         return None
     
-    max_wait, elapsed, interval = 300, 0, 15
+    max_wait, elapsed, interval = 600, 0, 15
     fetch_url = f"https://api.302.ai/suno/fetch/{task_id}"
     audio_url = None
     while elapsed < max_wait:

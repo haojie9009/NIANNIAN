@@ -47,7 +47,10 @@ def status(sid: str) -> Dict[str, Any]:
         if mr.get("ok"):
             result["video_url"] = mr.get("final_video_url", "")
         else:
-            result["error_detail"] = mr.get("error", "未知错误")
+            # 正在执行中则不返回旧 error_detail（避免 stale 残留）
+            mv06 = s["pipeline_state"].get("MV06", {})
+            if mv06.get("status") != "running":
+                result["error_detail"] = mr.get("error", "未知错误")
     return result
 
 

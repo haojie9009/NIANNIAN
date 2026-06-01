@@ -76,7 +76,7 @@ def bgm_submit(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
 
 @router.get("/poll/{task_id}")
-def bgm_poll(task_id: str, max_wait: int = 300) -> Dict[str, Any]:
+def bgm_poll(task_id: str, max_wait: int = 600) -> Dict[str, Any]:
     """轮询 BGM 任务状态（阻塞直到完成或超时）"""
     result = poll_bgm(task_id, max_wait=max_wait)
     if not result.get("ok"):
