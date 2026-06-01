@@ -1489,7 +1489,7 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
                 has_voiceover = True
                 audio_path = audio_map[i]["path"]
                 cmd += ["-i", audio_path]
-                start_ms = int(scene_starts[i] * 1000)
+                start_ms = scene_starts[i] * 1000.0
                 dur = entry["_target_dur"]
                 atrim = f"[{audio_idx_start + len(audio_labels)}]atrim=end={dur:.3f},asetpts=PTS-STARTPTS,adelay={start_ms}|{start_ms}:all=1[a{len(audio_labels)}]"
                 filters.append(atrim)
@@ -1501,12 +1501,8 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
             cmd += ["-i", str(bgm_path)]
             bgm_audio_idx = audio_idx_start + len(audio_labels)
             bgm_volume = 0.2 if has_voiceover else 0.3
-            bgm_filter = (
-                f"[{bgm_audio_idx}]aloop=-1:size=999999,"
-                f"atrim=end={total_dur:.3f},"
-                f"asetpts=PTS-STARTPTS,"
-                f"volume={bgm_volume}[abgm]"
-            )
+            # BGM 足够长时直接截断，不循环；不够长时才循环+淡入淡出
+            bgm_filter = f"[{bgm_audio_idx}]atrim=end={total_dur:.3f},asetpts=PTS-STARTPTS,volume={bgm_volume}[abgm]"
             filters.append(bgm_filter)
             audio_labels.append("[abgm]")
 
@@ -1569,7 +1565,7 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-r", str(fps),
-            "-shortest",
+            "-t", f"{total_dur:.3f}",
         ]
 
         FINAL_DIR.mkdir(parents=True, exist_ok=True)
