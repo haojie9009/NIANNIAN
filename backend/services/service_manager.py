@@ -1,5 +1,6 @@
 # backend/services/service_manager.py
 # 统一出口 —— routers 只允许从这里 import。
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -1197,6 +1198,15 @@ def _url_to_local_path(url: str) -> Optional[Path]:
     return ROOT_DIR / rel
 
 
+def _fmt_srt_time(seconds: float) -> str:
+    """将秒数转为 SRT 时间戳格式 HH:MM:SS,mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
 def _make_ken_burns_clip(img_path: str, duration: float) -> "VideoClip":
     """将静态图片转为 Ken Burns 缓慢缩放动画视频片段。"""
     from PIL import Image as PIL_Image
@@ -1534,42 +1544,44 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
         else:
             final_a_label = None
 
-        # 字幕：subtitles 是 source filter，不能在 filter_complex 里作为 sink 使用
-        # 方案：两遍渲染
-        #   Pass 1: 视频 concat + 音频混音 → 中间文件
-        #   Pass 2: 中间文件 + subtitles filter → 最终输出
+        # 字幕方案：drawtext + fontfile + textfile
+        #   每个字幕段落一个 UTF-8 文本文件，drawtext 从文件读取
+        #   优势：fontfile 直接指定字体路径，不依赖 fontsdir/fontconfig
         font = _find_chinese_font()
         import tempfile
         import shutil as _shutil
         import os as _os
-        srt_file = None
         temp_dir = None
+        srt_path = None
         has_subtitles = any(
             (sc.get("voice_script") or sc.get("narration") or sc.get("subtitle") or "").strip()
             for sc in usable
         )
         if has_subtitles and font:
             try:
-                temp_dir = tempfile.mkdtemp(prefix="niannian_sub_")
-                srt_file = _os.path.join(temp_dir, "subs.srt")
-                srt_index = 1
-                with open(srt_file, "w", encoding="utf-8-sig") as f:
-                    for entry in usable:
-                        i = entry["_idx"]
-                        text = (entry.get("voice_script") or entry.get("narration") or entry.get("subtitle") or "").strip()
-                        if text:
-                            start = scene_starts[i]
-                            dur = entry["_target_dur"]
-                            start_ts = _format_srt_time(start)
-                            end_ts = _format_srt_time(start + dur)
-                            f.write(f"{srt_index}\n")
-                            f.write(f"{start_ts} --> {end_ts}\n")
-                            f.write(f"{text}\n\n")
-                            srt_index += 1
-                svc_logger.info("[assemble] 已生成 SRT 字幕文件 (%d 条)", srt_index - 1)
+                _temp_base = OUTPUTS_DIR / "temp"
+                _temp_base.mkdir(parents=True, exist_ok=True)
+                temp_dir = tempfile.mkdtemp(prefix="niannian_sub_", dir=str(_temp_base))
+                srt_path = _os.path.join(temp_dir, "subs.srt")
+                idx = 0
+                srt_lines = []
+                for entry in usable:
+                    i = entry["_idx"]
+                    text = (entry.get("voice_script") or entry.get("narration") or entry.get("subtitle") or "").strip()
+                    if text:
+                        start = scene_starts[i]
+                        end = start + entry["_target_dur"]
+                        srt_lines.append(f"{idx + 1}")
+                        srt_lines.append(f"{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}")
+                        srt_lines.append(text)
+                        srt_lines.append("")
+                        idx += 1
+                with open(srt_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(srt_lines))
+                svc_logger.info("[assemble] 已生成 SRT 字幕文件 (%d 条)", idx)
             except Exception as e:
                 svc_logger.warning("[assemble] 字幕文件创建失败: %s", e)
-                srt_file = None
+                srt_path = None
                 if temp_dir:
                     _shutil.rmtree(temp_dir, ignore_errors=True)
                     temp_dir = None
@@ -1591,10 +1603,9 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
         out_filename = f"final_{sid}_{int(time.time())}.mp4"
         out_path = FINAL_DIR / out_filename
 
-        if has_subtitles and srt_file:
+        if has_subtitles and srt_path:
             # 两遍渲染：Pass 1 输出中间文件
-            import tempfile as _tf
-            _tmp_fd, inter_path = _tf.mkstemp(suffix="_inter.mp4", dir=str(FINAL_DIR))
+            _tmp_fd, inter_path = tempfile.mkstemp(suffix="_inter.mp4", dir=str(FINAL_DIR))
             _os.close(_tmp_fd)
             cmd_pass1 = cmd + [inter_path]
 
@@ -1613,27 +1624,39 @@ def assemble_final_video(s: dict) -> Dict[str, Any]:
 
             svc_logger.info("[assemble] Pass 1 完成 (%.1fs)", _d_pass1)
 
-            # Pass 2: 中间文件 + subtitles filter → 最终输出
-            escaped_path = srt_file.replace("\\", "\\\\").replace(":", "\\:")
-            font_dir = _os.path.dirname(font).replace("\\", "\\\\").replace(":", "\\:")
-            if not font_dir.endswith("\\\\") and not font_dir.endswith("/"):
-                font_dir += "\\\\"
-            font_name = "Source Han Sans SC"
-            vf = (
-                f"subtitles='{escaped_path}':fontsdir='{font_dir}':"
-                f"force_style='Fontname={font_name}'"
+            # Pass 2: subtitles 滤镜叠加字幕（-vf 模式，简单可靠，跨平台）
+            # 优先使用相对于 ROOT_DIR 的相对路径，避免 Windows 盘符冒号被 FFmpeg filter 解析器误认
+            def _to_filter_path(abs_path: str) -> str:
+                """尝试转为相对路径；成功则返回 / 分隔的相对路径，否则转义冒号后返回"""
+                try:
+                    rel = Path(abs_path).relative_to(ROOT_DIR)
+                    return str(rel).replace("\\", "/")
+                except ValueError:
+                    return abs_path.replace("\\", "/").replace(":", "\\:")
+
+            srt_escaped = _to_filter_path(srt_path)
+            font_dir = _os.path.dirname(font)
+            fonts_dir = _to_filter_path(font_dir)
+            font_family = "Source Han Sans SC"
+            svc_logger.info(f"srt_escaped：{srt_escaped}")
+            svc_logger.info(f"fonts_dir： {fonts_dir}")
+            vf_sub = (
+                f"subtitles={srt_escaped}:"
+                f"fontsdir={fonts_dir}:"
+                f"force_style='Fontname={font_family},Fontsize=28,PrimaryColour=&H00FFFFFF,"
+                f"OutlineColour=&H00000000,Outline=2,Alignment=2,MarginV=50'"
             )
             cmd2 = [
                 FFMPEG_BINARY, "-y",
                 "-i", inter_path,
-                "-vf", vf,
+                "-vf", vf_sub,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-c:a", "copy",
                 "-r", str(fps),
                 str(out_path),
             ]
 
-            svc_logger.info("[assemble] Pass 2: 叠加字幕 → %s", out_path)
+            svc_logger.info("[assemble] Pass 2: subtitles 叠加字幕 → %s", out_path)
             _t = time.time()
             result = _subprocess.run(cmd2, capture_output=True, encoding='utf-8', errors='replace')
             _d_pass2 = round(time.time() - _t, 1)
