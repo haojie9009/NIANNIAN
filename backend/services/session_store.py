@@ -139,6 +139,7 @@ def update(sid: str, **patches: Any) -> Dict[str, Any]:
 
 
 def patch_form(sid: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """更新表单数据。如有正在运行的 pipeline_chain，一并清理以便重新提交。"""
     with _LOCK:
         s = _SESSIONS.get(sid)
         if s is None:
@@ -146,6 +147,15 @@ def patch_form(sid: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in fields.items():
             if v not in (None, ""):
                 s["form_data"][k] = v
+
+        # 表单修改后，清理残留的 running pipeline_chain
+        chain = s.get("pipeline_state", {}).get("pipeline_chain", {})
+        if chain.get("status") == "running":
+            chain["status"] = "idle"
+            chain["step"] = ""
+            chain["label"] = ""
+            chain["error"] = "表单已修改，请重新提交制作"
+
         s["updated_at"] = time.time()
         _save(sid)
         return s
@@ -202,6 +212,29 @@ def recover_stale_mv06() -> int:
                 count += 1
     if count:
         svc_logger.warning("[session_store] recover_stale_mv06: 修复了 %d 个残留 running 状态", count)
+    return count
+
+
+def recover_stale_pipeline_chain() -> int:
+    """启动时修复残留的 running 状态 pipeline_chain。
+
+    pipeline_chain 的异步任务在进程重启后丢失，但状态仍为 running。
+    扫描并重置为 idle，让用户重新触发。
+    """
+    count = 0
+    with _LOCK:
+        for sid, s in _SESSIONS.items():
+            chain = s.get("pipeline_state", {}).get("pipeline_chain", {})
+            if chain.get("status") == "running":
+                chain["status"] = "idle"
+                chain["step"] = ""
+                chain["label"] = ""
+                chain["error"] = "服务器重启，请重试"
+                s["updated_at"] = time.time()
+                _save(sid)
+                count += 1
+    if count:
+        svc_logger.warning("[session_store] recover_stale_pipeline_chain: 修复了 %d 个残留 running 状态", count)
     return count
 
 

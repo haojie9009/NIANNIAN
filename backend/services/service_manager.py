@@ -2,8 +2,20 @@
 # 统一出口 —— routers 只允许从这里 import。
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# 按 sid 加锁，防止同一 session 的 pipeline_chain 并发执行
+_pipeline_chain_locks: Dict[str, threading.Lock] = {}
+_pipeline_chain_locks_lock = threading.Lock()
+
+
+def _get_chain_lock(sid: str) -> threading.Lock:
+    with _pipeline_chain_locks_lock:
+        if sid not in _pipeline_chain_locks:
+            _pipeline_chain_locks[sid] = threading.Lock()
+        return _pipeline_chain_locks[sid]
 
 from . import gate_manager, session_store  # noqa: F401
 
@@ -110,9 +122,10 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
         skill_path = SKILLS_DIR / MV_FILES[mv_id]
         system_prompt = load_skill(str(skill_path))
 
-        # payload：form_data + 已有 mv 输出
+        # payload：form_data（过滤空字符串）+ 已有 mv 输出
+        cleaned_form = {k: v for k, v in s["form_data"].items() if v != ""}
         payload: Dict[str, Any] = {
-            "form_data": s["form_data"],
+            "form_data": cleaned_form,
             "mv_outputs": s["mv_outputs"],
         }
         result = call_skill(mv_id, system_prompt, payload)
@@ -578,6 +591,126 @@ def run_pipeline_chain(sid: str) -> Dict[str, Any]:
     }
 
 
+def _run_pipeline_chain_work(sid: str) -> None:
+    """异步后台执行 MV01→MV02→MV03，通过 pipeline_state 报告进度。"""
+    import threading
+    threading.Thread(target=_pipeline_chain_inner, args=(sid,), daemon=True).start()
+
+
+def _pipeline_chain_inner(sid: str) -> None:
+    if not _get_chain_lock(sid).acquire(blocking=False):
+        return  # 该 sid 已有线程在运行，跳过
+    import time as _time
+    import traceback as _traceback
+    import json as _json
+
+    t_start = _time.time()
+    timings: Dict[str, float] = {}
+
+    def _set_progress(step: str, label: str, error: str | None = None) -> None:
+        s = session_store.require(sid)
+        s["pipeline_state"]["pipeline_chain"] = {
+            "status": "error" if error else "running",
+            "step": step,
+            "label": label,
+            "duration_sec": round(_time.time() - t_start, 1),
+            "timings": dict(timings),
+            "error": error,
+        }
+        session_store.update(sid)
+
+    try:
+        s = session_store.require(sid)
+        bubbles: List[Dict[str, str]] = []
+
+        # 检测 form_data 是否变更：与上次 MV01 运行时的摘要对比
+        import hashlib as _hashlib
+        current_hash = _hashlib.md5(
+            _json.dumps(s["form_data"], ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        stored_hash = s.get("_pipeline_chain_form_hash")
+        if stored_hash and stored_hash != current_hash:
+            # 表单数据已变更，清除旧输出并重新生成
+            for mv in ("MV01", "MV02", "MV03"):
+                s["mv_outputs"].pop(mv, None)
+            s.pop("pipeline_bubbles", None)
+            session_store.update(sid)
+
+        # ── MV01 ─────────────────────────────────────────────
+        mv01_out = s["mv_outputs"].get("MV01")
+        if not mv01_out:
+            _set_progress("mv01_running", "念念正在整理访谈内容...")
+            t0 = _time.time()
+            r = run_pipeline_step(sid, "MV01")
+            timings["mv01"] = round(_time.time() - t0, 1)
+            if r.get("error"):
+                _set_progress("mv01_error", "访谈整理失败", r.get("message", "未知错误"))
+                return
+            s = session_store.require(sid)
+            mv01_out = s["mv_outputs"].get("MV01")
+            # 记录 form_data 摘要，用于后续检测数据是否变更
+            s["_pipeline_chain_form_hash"] = current_hash
+            session_store.update(sid)
+
+        bubbles.append({
+            "role": "ai",
+            "content": _safe_mv_summary(_MV01_SUMMARY_SYS, mv01_out,
+                                        "我们已经把您讲述的内容整理好了，影像将围绕这些珍贵的记忆展开。"),
+        })
+        _set_progress("mv01_done", "访谈整理完成")
+
+        # ── MV02 ─────────────────────────────────────────────
+        if not s["mv_outputs"].get("MV02"):
+            _set_progress("mv02_running", "AI 核对中...")
+            t0 = _time.time()
+            run_pipeline_step(sid, "MV02")
+            timings["mv02"] = round(_time.time() - t0, 1)
+        _set_progress("mv02_done", "AI 核对完成")
+
+        # ── MV03 ─────────────────────────────────────────────
+        mv03_out = s["mv_outputs"].get("MV03")
+        if not mv03_out:
+            _set_progress("mv03_running", "方案确认中...")
+            t0 = _time.time()
+            r = run_pipeline_step(sid, "MV03")
+            timings["mv03"] = round(_time.time() - t0, 1)
+            if r.get("error"):
+                _set_progress("mv03_error", "方案确认失败", r.get("message", "未知错误"))
+                return
+            s = session_store.require(sid)
+            mv03_out = s["mv_outputs"].get("MV03")
+
+        summary_payload = dict(mv03_out) if isinstance(mv03_out, dict) else {"raw": mv03_out}
+        summary_payload["_current_deceased_name"] = s["form_data"].get("deceased_name", "")
+        bubbles.append({
+            "role": "ai",
+            "content": _safe_mv_summary(_MV03_SUMMARY_SYS, summary_payload,
+                                        "影像的基调、主角形象和画面氛围都已确定，接下来就可以进入分镜制作。"),
+        })
+        _set_progress("mv03_done", "方案确认完成")
+
+        # ── 完成 ─────────────────────────────────────────────
+        s = session_store.require(sid)
+        s["pipeline_bubbles"] = bubbles
+        # 确保 form_data 摘要已保存（MV01 缓存命中时未在上面保存）
+        if not s.get("_pipeline_chain_form_hash"):
+            s["_pipeline_chain_form_hash"] = current_hash
+        s["pipeline_state"]["pipeline_chain"] = {
+            "status": "done",
+            "step": "done",
+            "label": "全部完成",
+            "duration_sec": round(_time.time() - t_start, 1),
+            "timings": timings,
+            "error": None,
+        }
+        session_store.update(sid)
+
+    except Exception as exc:
+        _set_progress("error", "执行出错", _traceback.format_exc())
+    finally:
+        _get_chain_lock(sid).release()
+
+
 # ── 生成资源本地持久化 ─────────────────────────────────────────────────
 def _save_generated_image(b64: str, sid: str, scene_idx: int) -> str:
     """将 base64 图片写入磁盘，返回本地 URL。同时递增 _image_version。"""
@@ -622,6 +755,56 @@ def _download_generated_video(video_url: str, sid: str, scene_idx: int) -> Optio
 
 
 # ── 分镜场景：单镜图片/视频生成 ─────────────────────────────────────────
+def _desensitize_name_in_prompt(prompt: str, form_data: Dict, bible: Optional[Dict] = None) -> str:
+    """将 prompt 中的真实姓名替换为姓氏+称呼，避免可灵等平台的内容审核。
+
+    规则：张雪峰 → 张先生（保留姓氏，去掉名字）
+         张先生、张女士 → 不变
+    """
+    import re
+    name = None
+    gender = None
+
+    # 优先从人物圣经获取
+    if bible:
+        name = bible.get("display_name") or bible.get("character_id")
+        gender = bible.get("gender", "").lower()
+
+    # 回退到表单数据
+    if not name:
+        name = form_data.get("deceased_name", "")
+
+    if not name:
+        return prompt
+
+    # 如果本身已经是 "张先生"/"张女士" 格式，不处理
+    if "先生" in name or "女士" in name:
+        return prompt
+
+    # 确定姓氏称呼
+    surname_title = "先生"
+    if gender in ["女", "female", "f"]:
+        surname_title = "女士"
+    elif "女" in str(form_data.get("speaker_relation", "")):
+        surname_title = "女士"
+
+    # 提取姓氏并替换
+    surname_match = re.match(r'^([\u4e00-\u9fa5]{1,2})', name)
+    surname = surname_match.group(1) if surname_match else ""
+
+    result = prompt
+    if surname and name.startswith(surname):
+        replacement = f"{surname}{surname_title}"
+        # 防御：确保不产生 "张雪先生" 这种错误结果
+        if name != replacement and not replacement.endswith(name[len(surname):]):
+            result = prompt.replace(name, replacement)
+
+    if result != prompt:
+        svc_logger.info("[desensitize] 人名脱敏: '%s' → '%s'", name, replacement)
+
+    return result
+
+
 def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
     if not isinstance(mv04_out, dict):
         return []
@@ -742,7 +925,7 @@ def _select_reference_photo(s: dict, scene: dict, scene_idx: int) -> Optional[st
     return None
 
 
-def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "", force: bool = False) -> Dict[str, Any]:
+def gen_scene_image(sid: str, scene_idx: int, force: bool = False) -> Dict[str, Any]:
     """为单个分镜生成图片。写入本地磁盘，返回可访问的 URL。
 
     force=False（首次"生成图片"）：入参一致时返回缓存
@@ -783,7 +966,7 @@ def gen_scene_image(sid: str, scene_idx: int, reference_photo_url: str = "", for
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    ref_saved_as = reference_photo_url or _select_reference_photo(s, scene, scene_idx)
+    ref_saved_as =  _select_reference_photo(s, scene, scene_idx)
 
     # ── 入参缓存检查：非 force 模式下，入参一致且已有图片则直接返回 ──
     if not force:
@@ -863,24 +1046,54 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "", force: bool =
             if v_path.is_file():
                 return {"url": existing_video_url, "cached": True, "status": "done"}
 
-    # ── 复用 task_id：已有待处理任务且版本未变 ──
+    # ── 复用 task_id：已有待处理任务且版本未变（排除已失败的任务）──
     existing_task_id = scene.get("_video_task_id")
     if existing_task_id and not scene.get("_video_url") and not force:
-        current_ver = scene.get("_image_version", 0)
-        existing_ver = scene.get("_video_input_version", 0)
-        if current_ver == existing_ver:
-            return {
-                "task_id": existing_task_id,
-                "source": scene.get("_video_task_source", "302ai"),
-                "status": "pending",
-                "reused": True,
-            }
+        if scene.get("_video_status") not in ("failed", "error"):
+            current_ver = scene.get("_image_version", 0)
+            existing_ver = scene.get("_video_input_version", 0)
+            if current_ver == existing_ver:
+                # 先查询外部服务确认任务状态，避免复用已死任务
+                task_source = scene.get("_video_task_source", "302ai")
+                try:
+                    if task_source == "302ai":
+                        verify_res = generate_video_302ai_i2v(
+                            prompt="", image_b64_or_url="",
+                            poll=True, max_wait=0, _task_id_only=existing_task_id,
+                        )
+                    else:
+                        verify_res = generate_video_kling(
+                            prompt="", image_url="",
+                            poll=True, max_wait=0, _task_id_only=existing_task_id,
+                        )
+                    if verify_res.get("url"):
+                        # 任务已完成：更新缓存并返回
+                        local_url = _download_generated_video(verify_res["url"], sid, scene_idx)
+                        final_url = local_url or verify_res["url"]
+                        scene["_video_url"] = final_url
+                        scene["_video_task_id"] = existing_task_id
+                        scene["_video_task_source"] = task_source
+                        scene["_video_status"] = "done"
+                        session_store.update(sid)
+                        return {"url": final_url, "cached": True, "status": "done"}
+                    elif verify_res.get("error") and "超时" not in str(verify_res["error"]):
+                        # 任务已失败：清掉旧数据，走下面的新提交流程
+                        svc_logger.info("[video] 复用检查：旧 task 已失败，重新提交 sid=%s scene=%d", sid, scene_idx)
+                except Exception as e:
+                    svc_logger.warning("[video] 复用检查查询失败，重新提交 sid=%s scene=%d err=%s", sid, scene_idx, e)
+                # 仍在处理中 / 查询失败 → 清掉旧数据，重新提交
+                scene.pop("_video_task_id", None)
+                scene.pop("_video_task_source", None)
+                scene.pop("_video_status", None)
+                session_store.update(sid)
 
     # ── force 模式：清掉旧视频缓存，确保轮询走 API ──
     if force:
         scene.pop("_video_url", None)
         scene.pop("_video_status", None)
         scene.pop("_video_input_version", None)
+        scene.pop("_video_task_id", None)
+        scene.pop("_video_task_source", None)
         session_store.update(sid)
 
     # 相对路径（/api/outputs/generated/images/xxx.png）→ 上传图床获取公网 URL
@@ -914,6 +1127,11 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "", force: bool =
 
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
+
+    # 人名脱敏，避免可灵等平台的内容审核
+    form_data = s.get("form_data", {})
+    mv03_dict = mv03 if isinstance(mv03, dict) else None
+    video_prompt = _desensitize_name_in_prompt(video_prompt, form_data, mv03_dict)
 
     # 异步提交（poll=False），立即返回 task_id，由前端轮询
     res = generate_video_kling(
@@ -1025,6 +1243,19 @@ def poll_scene_video(task_id: str, source: str, sid: str, scene_idx: int, image_
         # 超时 = 仍在处理中，不是真正失败
         if "超时" in str(err):
             return {"status": "processing", "task_id": task_id, "source": source}
+        # 真正失败：清除 task_id 等元数据，避免下次重试时复用旧 task_id
+        try:
+            s = session_store.require(sid)
+            mv04 = s["mv_outputs"].get("MV04")
+            scenes = _get_scenes_from_mv04(mv04)
+            if 0 <= scene_idx < len(scenes):
+                scene = scenes[scene_idx]
+                scene.pop("_video_task_id", None)
+                scene.pop("_video_task_source", None)
+                scene["_video_status"] = "failed"
+            session_store.update(sid)
+        except Exception:
+            pass
         return {"status": "failed", "message": err}
 
     cloud_url = res.get("url")
@@ -1948,6 +2179,11 @@ def reset_step(sid: str, mv_id: str) -> Dict[str, Any]:
     mv_id = mv_id.upper()
     if mv_id not in gate_manager.GATE_ORDER:
         return {"ok": False, "message": f"unknown step: {mv_id}"}
+
+    s = session_store.require(sid)
+    pc = s["pipeline_state"].get("pipeline_chain", {})
+    if pc.get("status") == "running":
+        return {"ok": False, "message": "pipeline 正在运行中，请等待完成或页面刷新后再重置"}
 
     s = session_store.require(sid)
     idx = gate_manager.GATE_ORDER.index(mv_id)

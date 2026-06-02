@@ -51,6 +51,9 @@ def status(sid: str) -> Dict[str, Any]:
             mv06 = s["pipeline_state"].get("MV06", {})
             if mv06.get("status") != "running":
                 result["error_detail"] = mr.get("error", "未知错误")
+    # 附加 pipeline_chain 气泡（run-all 异步模式）
+    if "pipeline_bubbles" in s:
+        result["pipeline_bubbles"] = s["pipeline_bubbles"]
     return result
 
 
@@ -93,13 +96,23 @@ def reset_step(sid: str, mv_id: str) -> Dict[str, Any]:
 
 
 @router.post("/run-all/{sid}")
-def run_all(sid: str) -> Dict[str, Any]:
-    """串行运行 MV01→MV02→MV03，返回两段大白话气泡 + 分镜列表"""
+def run_all(sid: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """异步串行运行 MV01→MV02→MV03，立即返回，前端轮询 /status 获取进度"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    return sm.run_pipeline_chain(sid)
+    s = session_store.require(sid)
+    pc = s["pipeline_state"].get("pipeline_chain", {})
+    if pc.get("status") == "running":
+        raise HTTPException(409, "pipeline chain already running")
+    s["pipeline_state"]["pipeline_chain"] = {
+        "status": "running", "step": "submitted",
+        "label": "任务已提交", "error": None
+    }
+    session_store.update(sid)
+    background_tasks.add_task(sm._run_pipeline_chain_work, sid)
+    return {"ok": True, "status": "running", "message": "pipeline chain started"}
 
 
 @router.post("/scene/image/{sid}/{idx}")
@@ -109,9 +122,9 @@ def scene_image(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(Non
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    reference_photo_url = (payload or {}).get("reference_photo_url", "")
+
     force = (payload or {}).get("force", False)
-    return sm.gen_scene_image(sid, idx, reference_photo_url, force=force)
+    return sm.gen_scene_image(sid, idx, force=force)
 
 
 @router.get("/characters/{sid}")

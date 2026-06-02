@@ -41,6 +41,83 @@ function setThink(thinkId, on, label) {
   }
 }
 
+function updateThinkLabel(label) {
+  const el = document.getElementById('pipelineThink');
+  if (!el) return;
+  const lbl = el.querySelector('.think-label');
+  if (lbl) lbl.textContent = label;
+}
+
+function showError(msg) {
+  setThink('pipelineThink', false);
+  document.getElementById('errorOutput').textContent = msg || '未知错误';
+  show('phaseError');
+}
+
+// ───── Pill 状态映射 ─────
+const STEP_PILLS = {
+  mv01_running:  { MV01: 'active' },
+  mv01_done:     { MV01: 'done' },
+  mv01_error:    { MV01: 'done' },
+  mv02_running:  { MV01: 'done', MV02: 'active' },
+  mv02_done:     { MV01: 'done', MV02: 'done' },
+  mv02_error:    { MV01: 'done', MV02: 'done' },
+  mv03_running:  { MV01: 'done', MV02: 'done', MV03: 'active' },
+  mv03_done:     { MV01: 'done', MV02: 'done', MV03: 'done' },
+  mv03_error:    { MV01: 'done', MV02: 'done', MV03: 'done' },
+  done:          { MV01: 'done', MV02: 'done', MV03: 'done' },
+  error:         { MV01: 'done', MV02: 'done', MV03: 'done' },
+};
+
+function updatePillsFromStep(step) {
+  const mapping = STEP_PILLS[step];
+  if (!mapping) return;
+  for (const [pill, status] of Object.entries(mapping)) {
+    setPipePill(pill, status);
+  }
+}
+
+// ───── 轮询 ─────
+let pipeline_poll = null;
+const MAX_POLLS = 120; // 120 * 10s = 20 分钟
+
+function startPipelinePoll() {
+  let pollCount = 0;
+  pipeline_poll = setInterval(async () => {
+    if (pollCount++ > MAX_POLLS) {
+      clearInterval(pipeline_poll);
+      setButtons(true);
+      showError('处理超时，请重试');
+      return;
+    }
+    try {
+      const r = await apiGet(`/pipeline/status/${state.sid}`);
+      const pc = r.pipeline_state?.pipeline_chain;
+      if (!pc || pc.status === 'running') {
+        updateThinkLabel(pc?.label || '处理中...');
+        updatePillsFromStep(pc?.step || '');
+        return;
+      }
+      // 终态
+      clearInterval(pipeline_poll);
+      if (pc.status === 'done') {
+        setThink('pipelineThink', false);
+        updatePillsFromStep('done');
+        setButtons(true);
+        (r.pipeline_bubbles || []).forEach(b => appendAiBubble('pipelineChat', b.content));
+        setTimeout(() => show('phaseDone'), 300);
+      } else {
+        updatePillsFromStep('error');
+        setButtons(true);
+        showError(pc.error || '未知错误');
+      }
+    } catch (e) {
+      // 忽略瞬态错误（网络波动等）
+      console.warn('pipeline poll error:', e);
+    }
+  }, 10_000);
+}
+
 // ───── 阶段 1：Preview 大白话 ─────
 async function loadPreview() {
   setThink('previewThink', true);
@@ -56,40 +133,31 @@ async function loadPreview() {
   }
 }
 
-// ───── 阶段 2：运行 MV01→MV02→MV03 ─────
+// ───── 阶段 2：运行 MV01→MV02→MV03（异步轮询） ─────
+let pipeline_running = false;
+
+function setButtons(enabled) {
+  pipeline_running = !enabled;
+  document.getElementById('btnStartPipeline').disabled = !enabled;
+  document.getElementById('btnRetry').disabled = !enabled;
+}
+
 async function runPipeline() {
+  if (pipeline_running) return;
+  setButtons(false);
+  if (pipeline_poll) clearInterval(pipeline_poll);
   hide('phasePreview');
   show('phasePipeline');
-
-  // 视觉上分别点亮 active
   setPipePill('MV01', 'active');
-  setThink('pipelineThink', true, '念念正在整理访谈内容（约 30 秒）...');
+  setThink('pipelineThink', true, '任务已提交...');
 
   try {
-    const res = await apiPost(`/pipeline/run-all/${state.sid}`, {});
-    setThink('pipelineThink', false);
-
-    if (!res.ok) {
-      const errMsg = (res.errors || []).map(e => `[${e.step}] ${e.message}`).join('\n') || '未知错误';
-      document.getElementById('errorOutput').textContent = errMsg;
-      show('phaseError');
-      return;
-    }
-
-    // 标记完成
-    setPipePill('MV01', 'done');
-    setPipePill('MV02', 'done');
-    setPipePill('MV03', 'done');
-
-    // 渲染两条气泡
-    (res.bubbles || []).forEach(b => appendAiBubble('pipelineChat', b.content));
-
-    // 显示完成区
-    setTimeout(() => show('phaseDone'), 300);
+    await apiPost(`/pipeline/run-all/${state.sid}`, {});
+    startPipelinePoll();
   } catch (e) {
     setThink('pipelineThink', false);
-    document.getElementById('errorOutput').textContent = e.message || String(e);
-    show('phaseError');
+    setButtons(true);
+    showError(e.message || String(e));
   }
 }
 
@@ -107,6 +175,25 @@ async function bootstrap() {
     setTimeout(() => location.href = 'memorial.html', 1500);
     return;
   }
+
+  // 刷新恢复：仅检测 running 状态，中断中的任务继续轮询
+  try {
+    const r = await apiGet(`/pipeline/status/${state.sid}`);
+    const pc = r.pipeline_state?.pipeline_chain;
+    if (pc?.status === 'running') {
+      setButtons(false);
+      hide('phasePreview');
+      show('phasePipeline');
+      updateThinkLabel(pc.label || '处理中...');
+      updatePillsFromStep(pc.step || '');
+      startPipelinePoll();
+      return;
+    }
+    // done / error 状态不自动恢复，统一重新加载 preview
+  } catch {
+    // 首次访问，正常加载
+  }
+
   await loadPreview();
 }
 
@@ -114,4 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   document.getElementById('btnStartPipeline').onclick = runPipeline;
   document.getElementById('btnRetry').onclick = () => { hide('phaseError'); runPipeline(); };
+});
+
+window.addEventListener('beforeunload', () => {
+  if (pipeline_poll) clearInterval(pipeline_poll);
 });

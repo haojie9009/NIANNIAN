@@ -62,6 +62,10 @@ async def _lifespan(app: FastAPI):
     if stale:
         app_logger.info("[session_store] recover_stale_mv06: 修复了 %d 个中断的 MV06 任务", stale)
 
+    chain_stale = session_store.recover_stale_pipeline_chain()
+    if chain_stale:
+        app_logger.info("[session_store] recover_stale_pipeline_chain: 修复了 %d 个残留 running 的 pipeline_chain", chain_stale)
+
     try:
         yield
     finally:

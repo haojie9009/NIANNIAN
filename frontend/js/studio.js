@@ -88,7 +88,7 @@ function renderScenes() {
     let vidHtml;
     if (sc._vid_url && sc._vid_loaded) {
       vidHtml = `<div class="media-slot has-media" id="vidSlot${i}">
-           <video controls preload="none" data-src="${esc(sc._vid_url)}" onerror="this.style.display='none';var m=this.parentElement.querySelector('.media-cap');if(m)m.textContent='视频加载失败，请尝试下载';"></video>
+           <video controls preload="none" poster="${esc(sc._img_url || '')}" data-src="${esc(sc._vid_url)}" onerror="this.style.display='none';var m=this.parentElement.querySelector('.media-cap');if(m)m.textContent='视频加载失败，请尝试下载';"></video>
            <div class="media-cap" style="margin-top:6px;">
              <a class="btn btn-sm" href="${esc(sc._vid_url)}" download="scene-${String(i + 1).padStart(2, '0')}.mp4" target="_blank">下载视频</a>
            </div>
@@ -208,7 +208,7 @@ async function genSceneImage(idx, force = false) {
     if (photos.length > 0) {
       // 仅使用标记为"逝者"的照片，无标记则不传参考图
       const deceased = photos.find(p => p.subject === 'deceased');
-      reference_photo_url = deceased ? deceased.url : '';
+      reference_photo_url = deceased ? deceased.saved_as : '';
     }
   } catch (e) {
     console.warn('[genSceneImage] 获取照片列表失败：', e.message);
@@ -446,7 +446,7 @@ function showFinalVideo(url, loadNow = true, timings = null) {
   // 点击占位符 → 替换为真实 video 标签
   const ph = $('mv06VideoPlaceholder');
   if (ph) ph.onclick = () => {
-    ph.outerHTML = `<video controls autoplay style="width:100%;border-radius:10px;" src="${esc(url)}"></video>`;
+    ph.outerHTML = `<video controls preload="none" style="width:100%;border-radius:10px;" src="${esc(url)}"></video>`;
   };
   window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
@@ -710,10 +710,11 @@ async function bootstrap() {
       if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
         // 后端字段名 → 前端短名映射，保持内存一致
         r.scenes.forEach(sc => {
-          if (sc._image_url)    { sc._img_url     = sc._image_url; }
-          if (sc._video_url)    { sc._vid_url     = sc._video_url; }
+          if (sc._image_url)    { sc._img_url     = sc._image_url; sc._img_loaded = true; }
+          if (sc._video_url)    { sc._vid_url     = sc._video_url; sc._vid_loaded = true; }
           if (sc._video_status) { sc._vid_status  = sc._video_status; }
-          if (sc._video_url)    { sc._vid_loaded  = true; }
+          // 有 task_id 但无 status，说明正在生成中
+          if (sc._video_task_id && !sc._vid_status) { sc._vid_status = 'run'; }
         });
         state.scenes = r.scenes;
         setPill('MV04', 'done');
@@ -748,10 +749,11 @@ async function loadLastStoryboard() {
     const r = await apiGet(`/pipeline/scenes/${state.sid}`);
     if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
       r.scenes.forEach(sc => {
-        if (sc._image_url)    { sc._img_url     = sc._image_url; }
-        if (sc._video_url)    { sc._vid_url     = sc._video_url; }
+        if (sc._image_url)    { sc._img_url     = sc._image_url; sc._img_loaded = true; }
+        if (sc._video_url)    { sc._vid_url     = sc._video_url; sc._vid_loaded = true; }
         if (sc._video_status) { sc._vid_status  = sc._video_status; }
-        if (sc._video_url)    { sc._vid_loaded  = true; }
+        // 有 task_id 但无 status，说明正在生成中
+        if (sc._video_task_id && !sc._vid_status) { sc._vid_status = 'run'; }
       });
       state.scenes = r.scenes;
       setPill('MV04', 'done');
@@ -779,13 +781,11 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btnLoadLastScenes').onclick = loadLastStoryboard;
   $('btnFinalCut').onclick  = finalCut;
 
-  // 视频懒加载：点击播放器时才开始加载并播放
+  // 视频懒加载：点击播放器时才开始加载，不自动播放
   document.addEventListener('click', e => {
     const vid = e.target.closest('video[data-src]');
     if (vid && !vid.src) {
       vid.src = vid.dataset.src;
-      vid.load();
-      vid.play().catch(() => {}); // 自动播放，忽略浏览器策略限制
     }
   });
 });

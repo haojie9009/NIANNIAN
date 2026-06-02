@@ -5,8 +5,8 @@
 - 选中删除后，同时清理 session_store JSON 和磁盘文件
 
 用法:
-    python -m backend.scripts.media_cleaner          # 交互式选择 session
-    python -m backend.scripts.media_cleaner <sid>     # 指定 session
+    python -m tools.media_cleaner          # 交互式选择 session
+    python -m tools.media_cleaner <sid>     # 指定 session
 """
 import json
 import os
@@ -14,8 +14,9 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-BACKEND_DIR = SCRIPT_DIR.parent
-SESSIONS_DIR = BACKEND_DIR / "data" / "sessions"
+PROJECT_DIR = SCRIPT_DIR.parent
+SESSIONS_DIR = PROJECT_DIR / "backend" / "data" / "sessions"
+BACKEND_DIR = PROJECT_DIR / "backend"
 
 MEDIA_PREFIXES = (
     "/api/outputs/generated/images/",

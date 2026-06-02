@@ -29,8 +29,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from pathlib import Path
-from logger import svc_logger
+from logger import svc_logger, llm_logger
 
+import logging as _logging
 import requests as _requests
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -38,8 +39,6 @@ from openai import OpenAI
 from core.storage import DATA_DIR
 
 from logger import cache_logger as _cache_log, playback_logger as _pb_log
-import logging as _logging
-_llm_log = _logging.getLogger("niannian.llm")
 
 # Ctrl+C 中断 BGM 轮询用 — FastAPI shutdown 时由 main.py 设置
 bgm_shutdown = threading.Event()
@@ -59,14 +58,16 @@ _302_VIDEO_SEED_FETCH_URL = "https://api.302.ai/volcengine/api/v3/contents/gener
 
 
 
-_llm_log.info("[llm] LLM 模式: REAL(302.ai), text_base=%s, video_base=%s",
+llm_logger.info("[llm] LLM 模式: REAL(302.ai), text_base=%s, video_base=%s",
               _302_BASE_URL, _KLING_OFFICIAL_BASE)
 _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 
 # ── 各任务专属模型 ─────────────────────────────────────────────────────────────
 # 文本分析：主力 Claude，自动回退到 GPT-5.4
-TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "claude-sonnet-4-6")
-TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "gpt-5.4")
+# TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "claude-sonnet-4-6")
+# TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "gpt-5.4")
+TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_MODEL",      "claude-sonnet-4-6")
+TEXT_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "gpt-5.4")
 
 # 分镜制作（MV04）专属：gpt-4o（速度快、结构化能力强）
 STORYBOARD_MODEL    = os.getenv("AI302_STORYBOARD_MODEL", "gpt-4o")
@@ -219,7 +220,7 @@ def _text_model_queue() -> List[Tuple[str, OpenAI]]:
     """
     q: List[Tuple[str, OpenAI]] = [
         (TEXT_MODEL, PRIMARY_CLIENT),
-        (TEXT_FALLBACK_MODEL, PRIMARY_CLIENT),
+        (TEXT_FALLBACK_MODEL, PRIMARY_CLIENT)
     ]
     if _LOCAL_CLIENT and _LOCAL_MODEL:
         q.append((_LOCAL_MODEL, _LOCAL_CLIENT))
@@ -322,7 +323,7 @@ def call_skill(
                     raw = _extract_json(raw)
                 result = json.loads(raw)
                 if _had_fallback:
-                    _llm_log.info("[llm] %s 降级到 %s，skill=%s 调用成功", TEXT_MODEL, model_name, skill_name)
+                    llm_logger.info("[llm] %s 降级到 %s，skill=%s 调用成功", TEXT_MODEL, model_name, skill_name)
                 # ── Record: 保存响应（record 模式，或 playback miss 后补存）──
                 if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
@@ -331,7 +332,7 @@ def call_skill(
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败，skill=%s: %s", model_name, skill_name, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败，skill=%s: %s", model_name, skill_name, exc)
                     _had_fallback = True
                 if attempt < 3:
                     time.sleep(2)
@@ -378,17 +379,17 @@ def call_memorial_chat(
             except Exception as exc:
                 last_error = f"{model}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败: %s", model, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败: %s", model, exc)
                 if attempt < 3:
                     time.sleep(1)
         return f"（念念暂时无法回应，请稍后再试。错误：{last_error or '未知'}）"
 
-    if _CACHE_MODE == "playback":
-        for _model_name, _ in _iter_model_clients():
-            cached = _cache.load("chat/completions", _model_name, {"messages": messages})
-            if cached is not None:
-                return cached.get("reply", "")
-        _cache_log.info("[cache] MISS | model=%s | func=call_memorial_chat → 调用 API", TEXT_MODEL)
+    # if _CACHE_MODE == "playback":
+    for _model_name, _ in _iter_model_clients():
+        cached = _cache.load("chat/completions", _model_name, {"messages": messages})
+        if cached is not None:
+            return cached.get("reply", "")
+    _cache_log.info("[cache] MISS | model=%s | func=call_memorial_chat → 调用 API", TEXT_MODEL)
 
     _had_fallback = False
     for model_name, client in _iter_model_clients():
@@ -402,7 +403,7 @@ def call_memorial_chat(
                     max_tokens=600,
                 )
                 if _had_fallback:
-                    _llm_log.info("[llm] %s 降级到 %s，memorial_chat 成功", TEXT_MODEL, model_name)
+                    llm_logger.info("[llm] %s 降级到 %s，memorial_chat 成功", TEXT_MODEL, model_name)
                 # ── Record: 保存响应 ──
                 if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", {"reply": response.choices[0].message.content or ""},
@@ -411,7 +412,7 @@ def call_memorial_chat(
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败，memorial_chat: %s", model_name, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败，memorial_chat: %s", model_name, exc)
                     _had_fallback = True
                 if attempt < 3:
                     time.sleep(2)
@@ -442,7 +443,7 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
                     temperature=0.4,
                 )
                 if _had_fallback:
-                    _llm_log.info("[llm] %s 降级到 %s，freeform 成功", TEXT_MODEL, model_name)
+                    llm_logger.info("[llm] %s 降级到 %s，freeform 成功", TEXT_MODEL, model_name)
                 result = response.choices[0].message.content or ""
                 if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", {"reply": result}, model_name,
@@ -451,7 +452,7 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败，freeform: %s", model_name, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败，freeform: %s", model_name, exc)
                     _had_fallback = True
                 if attempt < 3:
                     time.sleep(2)
@@ -491,7 +492,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
                     raw = _extract_json(raw)
                 result = json.loads(raw)
                 if _had_fallback:
-                    _llm_log.info("[llm] %s 降级到 %s，structured 成功", TEXT_MODEL, model_name)
+                    llm_logger.info("[llm] %s 降级到 %s，structured 成功", TEXT_MODEL, model_name)
                 if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
                                 {"system": system_prompt, "user": user_content})
@@ -499,7 +500,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败，structured: %s", model_name, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败，structured: %s", model_name, exc)
                     _had_fallback = True
                 if attempt < 3:
                     time.sleep(2)
@@ -536,7 +537,7 @@ def describe_image(image_bytes: bytes, filename: str) -> str:
         except Exception as exc:  # pragma: no cover
             last_error = f"{VISION_MODEL}: {exc}"
             if attempt >= 2:
-                _llm_log.warning("[llm] %s 图片理解连续2次重试失败: %s", VISION_MODEL, exc)
+                llm_logger.warning("[llm] %s 图片理解连续2次重试失败: %s", VISION_MODEL, exc)
             if attempt < 2:
                 time.sleep(1)
     return f"[IMAGE_PARSE_ERROR] {last_error or 'Unknown error'}"
@@ -555,7 +556,7 @@ def transcribe_audio(audio_bytes: bytes, filename: str) -> str:
         except Exception as exc:  # pragma: no cover
             last_error = f"{AUDIO_MODEL}: {exc}"
             if attempt >= 2:
-                _llm_log.warning("[llm] %s 语音转写连续2次重试失败: %s", AUDIO_MODEL, exc)
+                llm_logger.warning("[llm] %s 语音转写连续2次重试失败: %s", AUDIO_MODEL, exc)
             if attempt < 2:
                 time.sleep(1)
     return f"[AUDIO_PARSE_ERROR] {last_error or 'Unknown error'}"
@@ -576,7 +577,7 @@ def seed_tts(text: str) -> Optional[bytes]:
     流式 JSON Lines 响应：每行 base64 音频数据，code=20000000 表示合成结束。
     """
     if not (_SEED_APP_ID and _SEED_ACCESS_KEY and _SEED_RESOURCE_ID):
-        _llm_log.warning("[tts] Seed TTS env vars not set")
+        llm_logger.warning("[tts] Seed TTS env vars not set")
         return None
 
     headers = {
@@ -612,7 +613,7 @@ def seed_tts(text: str) -> Optional[bytes]:
         session = _requests.Session()
         response = session.post(_SEED_TTS_URL, headers=headers, json=payload, stream=True, timeout=120)
         if response.status_code != 200:
-            _llm_log.error("[tts] HTTP %d: %s", response.status_code, response.text[:200])
+            llm_logger.error("[tts] HTTP %d: %s", response.status_code, response.text[:200])
             return None
 
         for chunk in response.iter_lines(decode_unicode=True):
@@ -624,20 +625,20 @@ def seed_tts(text: str) -> Optional[bytes]:
                 audio_data.extend(base64.b64decode(data["data"]))
             elif code == 20000000:
                 if "usage" in data:
-                    _llm_log.info("[tts] usage: %s", data["usage"])
+                    llm_logger.info("[tts] usage: %s", data["usage"])
                 break
             elif code > 0:
-                _llm_log.error("[tts] error %d: %s", code, data.get("message", ""))
+                llm_logger.error("[tts] error %d: %s", code, data.get("message", ""))
                 return None
 
         if not audio_data:
-            _llm_log.warning("[tts] no audio data returned")
+            llm_logger.warning("[tts] no audio data returned")
             return None
 
         return bytes(audio_data)
 
     except Exception as e:
-        _llm_log.exception("[tts] failed: %s", e)
+        llm_logger.exception("[tts] failed: %s", e)
         return None
 
 
@@ -686,7 +687,7 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
     """
     api_key = os.getenv("AI302_API_KEY", "")
     if not api_key:
-        _llm_log.warning("[bgm] AI302_API_KEY not set")
+        llm_logger.warning("[bgm] AI302_API_KEY not set")
         return None
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -702,16 +703,16 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
     try:
         r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
         if r.status_code != 200:
-            _llm_log.error("[bgm] submit HTTP %d: %s", r.status_code, r.text[:300])
+            llm_logger.error("[bgm] submit HTTP %d: %s", r.status_code, r.text[:300])
             return None
         resp = r.json()
         task_id = resp.get("data", "")
         if not task_id:
-            _llm_log.error("[bgm] 未获得 task_id: %s", r.text[:200])
+            llm_logger.error("[bgm] 未获得 task_id: %s", r.text[:200])
             return None
-        _llm_log.info("[bgm] suno submit OK task_id=%s tags=%s", task_id, tags)
+        llm_logger.info("[bgm] suno submit OK task_id=%s tags=%s", task_id, tags)
     except Exception as e:
-        _llm_log.exception("[bgm] submit failed: %s", e)
+        llm_logger.exception("[bgm] submit failed: %s", e)
         return None
     
     max_wait, elapsed, interval = 600, 0, 15
@@ -719,7 +720,7 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
     audio_url = None
     while elapsed < max_wait:
         if bgm_shutdown.wait(interval):
-            _llm_log.info("[bgm] 收到 shutdown 信号，停止轮询")
+            llm_logger.info("[bgm] 收到 shutdown 信号，停止轮询")
             return None
         elapsed += interval
         try:
@@ -742,13 +743,13 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
                 status = pd["data"].get("status", "")
             if status in ("failed", "FAILED"):
                 reason = pd.get("data", {}).get("fail_reason", "未知")
-                _llm_log.error("[bgm] suno failed: %s", reason)
+                llm_logger.error("[bgm] suno failed: %s", reason)
                 return None
 
         except (_requests.exceptions.ConnectionError, _requests.exceptions.SSLError) as e:
-            _llm_log.warning("[bgm] poll transient error: %s — 5s 后重试", e)
+            llm_logger.warning("[bgm] poll transient error: %s — 5s 后重试", e)
             if bgm_shutdown.wait(5):
-                _llm_log.info("[bgm] 收到 shutdown 信号，停止轮询")
+                llm_logger.info("[bgm] 收到 shutdown 信号，停止轮询")
                 return None
             elapsed += 5
             try:
@@ -769,27 +770,27 @@ def generate_bgm_suno(tags: str = "warm, nostalgic, gentle, piano, emotional, me
                     status = pd["data"].get("status", "")
                 if status in ("failed", "FAILED"):
                     reason = pd.get("data", {}).get("fail_reason", "未知")
-                    _llm_log.error("[bgm] suno failed: %s", reason)
+                    llm_logger.error("[bgm] suno failed: %s", reason)
                     return None
             except Exception as e2:
-                _llm_log.warning("[bgm] poll retry exception: %s", e2)
+                llm_logger.warning("[bgm] poll retry exception: %s", e2)
                 continue
 
         except Exception as e:
-            _llm_log.warning("[bgm] poll exception: %s", e)
+            llm_logger.warning("[bgm] poll exception: %s", e)
 
     if not audio_url:
-        _llm_log.error("[bgm] suno timeout or no audio_url after %ds", max_wait)
+        llm_logger.error("[bgm] suno timeout or no audio_url after %ds", max_wait)
         return None
 
     # 下载
     try:
         r = _requests.get(audio_url, timeout=120)
         r.raise_for_status()
-        _llm_log.info("[bgm] downloaded %d bytes from %s", len(r.content), audio_url)
+        llm_logger.info("[bgm] downloaded %d bytes from %s", len(r.content), audio_url)
         return r.content
     except Exception as e:
-        _llm_log.exception("[bgm] download failed: %s", e)
+        llm_logger.exception("[bgm] download failed: %s", e)
         return None
 
 
@@ -1344,7 +1345,7 @@ def generate_video_seed(
         task_id = resp.get("id", "")
         if not task_id:
             return {"error": f"302.ai 未返回 task_id：{resp}", "source": "302ai"}
-        _llm_log.info("[302ai_i2v] 提交成功 task_id=%s", task_id)
+        llm_logger.info("[302ai_i2v] 提交成功 task_id=%s", task_id)
 
         if not poll:
             return {"task_id": task_id, "status": 5, "source": "302ai"}
@@ -1386,9 +1387,9 @@ def generate_video_seed(
             time.sleep(interval)
 
     if max_wait > interval:
-        _llm_log.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
+        llm_logger.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
     else:
-        _llm_log.debug("302.ai 单次查询仍在处理，task_id=%s", task_id)
+        llm_logger.debug("302.ai 单次查询仍在处理，task_id=%s", task_id)
     return {"task_id": task_id, "status": 10, "source": "302ai",
             "error": f"302.ai 等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
@@ -1494,7 +1495,7 @@ def generate_video_302ai_i2v(
         if not task_id:
             return {"error": f"302.ai 未返回 task_id：{resp}", "source": "302ai"}
 
-        _llm_log.info("[302ai_i2v] 提交成功 task_id=%s", task_id)
+        llm_logger.info("[302ai_i2v] 提交成功 task_id=%s", task_id)
 
         if not poll:
             return {"task_id": task_id, "status": 5, "source": "302ai"}
@@ -1547,9 +1548,9 @@ def generate_video_302ai_i2v(
             time.sleep(interval)
 
     if max_wait > interval:
-        _llm_log.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
+        llm_logger.error("302.ai 等待超时（%ds），task_id=%s", max_wait, task_id)
     else:
-        _llm_log.debug("302.ai 单次查询仍在处理，task_id=%s", task_id)
+        llm_logger.debug("302.ai 单次查询仍在处理，task_id=%s", task_id)
     return {"task_id": task_id, "status": 10, "source": "302ai",
             "error": f"302.ai 等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
@@ -1580,9 +1581,6 @@ def generate_video_kling(
       排队 → {"task_id": "...", "status": ..., "source": ...}
       失败 → {"error": "..."}
     """
-    import logging as _logv
-    _log_v = _logv.getLogger("llm_client.video")
-
     # ── 0. 只轮询已有任务，跳过提交 ─────────────────────────────────────────
     if _task_id_only:
         if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
@@ -1606,7 +1604,7 @@ def generate_video_kling(
 
     # ── 1. 若未配置可灵官方 key，直接走 302.ai ───────────────────────────────
     if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
-        _log_v.info("[video] 可灵官方 key 未配置，直接使用 302.ai 备用接口")
+        llm_logger.info("[video] 可灵官方 key 未配置，直接使用 302.ai 备用接口")
         _cache_log.info("[cache] CALL  | model=302.ai(kling2.6) | func=generate_video_kling")
         result = generate_video_302ai_i2v(
             prompt=prompt,
@@ -1628,7 +1626,7 @@ def generate_video_kling(
     try:
         token = _kling_jwt()
     except Exception as e:
-        _log_v.warning(f"[video] JWT 生成失败，fallback 到 302.ai：{e}")
+        llm_logger.warning(f"[video] JWT 生成失败，fallback 到 302.ai：{e}")
         return generate_video_302ai_i2v(
             prompt=prompt, image_b64_or_url=image_url,
             poll=poll, max_wait=max_wait,
@@ -1662,7 +1660,7 @@ def generate_video_kling(
                 img_bytes = base64.b64decode(b64_part)
                 return _upload_image_to_public(img_bytes, ext)
             except Exception as _e:
-                _log_v.warning(f"[video] base64 解析失败：{_e}")
+                llm_logger.warning(f"[video] base64 解析失败：{_e}")
                 return None
         if raw_url.startswith(("http://", "https://")):
             return raw_url  # 已是完整 URL
@@ -1678,16 +1676,16 @@ def generate_video_kling(
                         img_bytes = f.read()
                     return _upload_image_to_public(img_bytes, ext)
                 else:
-                    _log_v.warning(f"[video] 本地文件不存在：{full_path}")
+                    llm_logger.warning(f"[video] 本地文件不存在：{full_path}")
             except Exception as _e:
-                _log_v.warning(f"[video] 相对路径解析失败：{_e}")
+                llm_logger.warning(f"[video] 相对路径解析失败：{_e}")
         return None
 
     # 首帧图
     if image_url:
         public_image = _resolve_image(image_url)
         if not public_image:
-            _log_v.warning("[video] 首帧图处理失败，fallback 到 302.ai")
+            llm_logger.warning("[video] 首帧图处理失败，fallback 到 302.ai")
             return generate_video_302ai_i2v(
                 prompt=prompt, image_b64_or_url=image_url,
                 duration=duration, poll=poll, max_wait=max_wait,
@@ -1700,7 +1698,7 @@ def generate_video_kling(
         if public_tail:
             body["image_tail"] = public_tail
         else:
-            _log_v.warning("[video] 尾帧图处理失败，忽略 image_tail 字段继续提交")
+            llm_logger.warning("[video] 尾帧图处理失败，忽略 image_tail 字段继续提交")
 
     submit_url = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video"
     if _task_id_only:
@@ -1709,24 +1707,25 @@ def generate_video_kling(
     else:
         _cache_log.info("[cache] CALL  | model=kling-v3 | func=generate_video_kling")
         try:
+            # llm_logger.debug(f"[video] 调用可灵官方 API 提交任务，body='{body}...'")
             r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
             try:
                 resp_data = r.json()
             except Exception:
-                _log_v.warning("[video] 官方 API 响应非 JSON，fallback 到 302.ai")
+                llm_logger.warning("[video] 官方 API 响应非 JSON，fallback 到 302.ai")
                 return generate_video_302ai_i2v(
                     prompt=prompt, image_b64_or_url=image_url,
                     duration=duration, poll=poll, max_wait=max_wait,
                 )
         except Exception as e:
-            _log_v.warning(f"[video] 官方 API 请求异常，fallback 到 302.ai：{e}")
+            llm_logger.warning(f"[video] 官方 API 请求异常，fallback 到 302.ai：{e}")
             return generate_video_302ai_i2v(
                 prompt=prompt, image_b64_or_url=image_url,
                 duration=duration, poll=poll, max_wait=max_wait,
             )
 
         if resp_data.get("code", -1) != 0:
-            _log_v.warning(f"[video] 官方 API 提交失败 code={resp_data.get('code')}，fallback 到 302.ai")
+            llm_logger.warning(f"[video] 官方 API 提交失败 code={resp_data.get('code')}，fallback 到 302.ai")
             return generate_video_302ai_i2v(
                 prompt=prompt, image_b64_or_url=image_url,
                 duration=duration, poll=poll, max_wait=max_wait,
@@ -1734,7 +1733,7 @@ def generate_video_kling(
 
         task_id = resp_data.get("data", {}).get("task_id", "")
         if not task_id:
-            _log_v.warning("[video] 官方 API 未返回 task_id，fallback 到 302.ai")
+            llm_logger.warning("[video] 官方 API 未返回 task_id，fallback 到 302.ai")
             return generate_video_302ai_i2v(
                 prompt=prompt, image_b64_or_url=image_url,
                 duration=duration, poll=poll, max_wait=max_wait,
@@ -1786,9 +1785,9 @@ def generate_video_kling(
             time.sleep(interval)
 
     if max_wait > interval:
-        _llm_log.error("Kling 等待超时（%ds），task_id=%s", max_wait, task_id)
+        llm_logger.error("Kling 等待超时（%ds），task_id=%s", max_wait, task_id)
     else:
-        _llm_log.debug("Kling 单次查询仍在处理，task_id=%s", task_id)
+        llm_logger.debug("Kling 单次查询仍在处理，task_id=%s", task_id)
     return {"task_id": task_id, "status": "processing", "source": "kling",
             "error": f"等待超时（{max_wait}s），可手动轮询 task_id={task_id}"}
 
@@ -1836,7 +1835,7 @@ def call_storyboard(system_prompt: str, user_content: str, use_cache: bool = Tru
                     raw = _extract_json(raw)
                 result = json.loads(raw)
                 if _had_fallback:
-                    _llm_log.info("[llm] %s 降级到 %s，storyboard 成功", STORYBOARD_MODEL, model_name)
+                    llm_logger.info("[llm] %s 降级到 %s，storyboard 成功", STORYBOARD_MODEL, model_name)
                 if _CACHE_MODE in ("record", "playback"):
                     _cache.save("chat/completions", result, model_name,
                                 {"system": system_prompt, "user": user_content})
@@ -1844,7 +1843,7 @@ def call_storyboard(system_prompt: str, user_content: str, use_cache: bool = Tru
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt >= 3:
-                    _llm_log.warning("[llm] %s 连续3次重试均失败，storyboard: %s", model_name, exc)
+                    llm_logger.warning("[llm] %s 连续3次重试均失败，storyboard: %s", model_name, exc)
                     _had_fallback = True
                 if attempt < 3:
                     time.sleep(1)
