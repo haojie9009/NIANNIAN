@@ -789,15 +789,14 @@ def _desensitize_name_in_prompt(prompt: str, form_data: Dict, bible: Optional[Di
         surname_title = "女士"
 
     # 提取姓氏并替换
-    surname_match = re.match(r'^([\u4e00-\u9fa5]{1,2})', name)
+    surname_match = re.match(r'^([\u4e00-\u9fa5])', name)
     surname = surname_match.group(1) if surname_match else ""
 
     result = prompt
     if surname and name.startswith(surname):
         replacement = f"{surname}{surname_title}"
-        # 防御：确保不产生 "张雪先生" 这种错误结果
-        if name != replacement and not replacement.endswith(name[len(surname):]):
-            result = prompt.replace(name, replacement)
+        # 简单替换即可：原名被完整替换为"姓氏+称呼"
+        result = prompt.replace(name, replacement)
 
     if result != prompt:
         svc_logger.info("[desensitize] 人名脱敏: '%s' → '%s'", name, replacement)

@@ -712,7 +712,10 @@ async function bootstrap() {
         r.scenes.forEach(sc => {
           if (sc._image_url)    { sc._img_url     = sc._image_url; sc._img_loaded = true; }
           if (sc._video_url)    { sc._vid_url     = sc._video_url; sc._vid_loaded = true; }
-          if (sc._video_status) { sc._vid_status  = sc._video_status; }
+          if (sc._video_status) {
+            // pending/processing → run (生成中)
+            sc._vid_status = (sc._video_status === 'pending' || sc._video_status === 'processing') ? 'run' : sc._video_status;
+          }
           // 有 task_id 但无 status，说明正在生成中
           if (sc._video_task_id && !sc._vid_status) { sc._vid_status = 'run'; }
         });
@@ -751,7 +754,10 @@ async function loadLastStoryboard() {
       r.scenes.forEach(sc => {
         if (sc._image_url)    { sc._img_url     = sc._image_url; sc._img_loaded = true; }
         if (sc._video_url)    { sc._vid_url     = sc._video_url; sc._vid_loaded = true; }
-        if (sc._video_status) { sc._vid_status  = sc._video_status; }
+        if (sc._video_status) {
+          // pending/processing → run (生成中)
+          sc._vid_status = (sc._video_status === 'pending' || sc._video_status === 'processing') ? 'run' : sc._video_status;
+        }
         // 有 task_id 但无 status，说明正在生成中
         if (sc._video_task_id && !sc._vid_status) { sc._vid_status = 'run'; }
       });
