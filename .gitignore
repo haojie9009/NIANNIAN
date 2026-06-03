@@ -32,3 +32,5 @@ asset/*
 .claude/
 backend/.claude/
 .obsidian/
+
+docs/API.md
